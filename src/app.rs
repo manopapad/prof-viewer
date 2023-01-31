@@ -5,8 +5,9 @@ use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use crate::data::{DataSource, EntryID, EntryInfo, Field, SlotTile, UtilPoint};
+use crate::data::{DataSource, EntryID, EntryInfo, Field, Item, SlotTile, UtilPoint};
 use crate::timestamp::Interval;
+use std::collections::HashSet;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -107,6 +108,8 @@ struct Context {
     zoom_index: usize,
 
     search: String,
+
+    selected_items: Vec<Item>, // slow, should be using a HashSet
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -365,6 +368,7 @@ impl Slot {
         tile: &SlotTile,
         rows: u64,
         mut hover_pos: Option<Pos2>,
+        clicked: bool,
         // double_clicked: bool,
         ui: &mut egui::Ui,
         rect: Rect,
@@ -418,9 +422,32 @@ impl Slot {
                 if row_hover && hover_pos.map_or(false, |h| item_rect.contains(h)) {
                     hover_pos = None;
 
-                    // if response.double_clicked() {
-                    //     println!("double clicked");
-                    // }
+                    let index = cx.selected_items.iter().position(|r| r == item);
+                    if index.is_some() {
+                        if (clicked) {
+                            cx.selected_items.remove(index.unwrap());
+                            ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
+                        } else {
+                            ui.painter().rect(
+                                item_rect,
+                                0.0,
+                                item.color,
+                                Stroke::new(2.0, Color32::WHITE),
+                            );
+                        }
+                    } else {
+                        if (clicked) {
+                            cx.selected_items.push(item.clone());
+                            ui.painter().rect(
+                                item_rect,
+                                0.0,
+                                item.color,
+                                Stroke::new(2.0, Color32::WHITE),
+                            );
+                        } else {
+                            ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
+                        }
+                    }
                     ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
                         ui.label(&item.title);
                         for (name, field) in &item.fields {
@@ -443,8 +470,19 @@ impl Slot {
                             }
                         }
                     });
+                } else {
+                    let index = cx.selected_items.iter().position(|r| r == item);
+                    if index.is_some() {
+                        ui.painter().rect(
+                            item_rect,
+                            0.0,
+                            item.color,
+                            Stroke::new(2.0, Color32::WHITE),
+                        );
+                    } else {
+                        ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
+                    }
                 }
-                ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                 // if double_clicked {
                 //     println!("double clicked:");
                 // }
@@ -452,6 +490,55 @@ impl Slot {
         }
         hover_pos
     }
+
+    // fn was_clicked(events: Vec<PointerEvent>, ctx: &mut Context) -> bool {
+    //     for pointer_event in &input.pointer.pointer_events {
+    //         match pointer_event {
+    //             PointerEvent::Moved(_) => {}
+    //             PointerEvent::Pressed { .. } => {
+    //                 if hovered {
+    //                     if sense.click && memory.interaction.click_id.is_none() {
+    //                         // potential start of a click
+    //                         memory.interaction.click_id = Some(id);
+    //                         response.is_pointer_button_down_on = true;
+    //                     }
+
+    //                     // HACK: windows have low priority on dragging.
+    //                     // This is so that if you drag a slider in a window,
+    //                     // the slider will steal the drag away from the window.
+    //                     // This is needed because we do window interaction first (to prevent frame delay),
+    //                     // and then do content layout.
+    //                     if sense.drag
+    //                         && (memory.interaction.drag_id.is_none()
+    //                             || memory.interaction.drag_is_window)
+    //                     {
+    //                         // potential start of a drag
+    //                         memory.interaction.drag_id = Some(id);
+    //                         memory.interaction.drag_is_window = false;
+    //                         memory.window_interaction = None; // HACK: stop moving windows (if any)
+    //                         response.is_pointer_button_down_on = true;
+    //                         response.dragged = true;
+    //                     }
+    //                 }
+    //             }
+    //             PointerEvent::Released(click) => {
+    //                 response.drag_released = response.dragged;
+    //                 response.dragged = false;
+
+    //                 if hovered && response.is_pointer_button_down_on {
+    //                     if let Some(click) = click {
+    //                         let clicked = hovered && response.is_pointer_button_down_on;
+    //                         response.clicked[click.button as usize] = clicked;
+    //                         response.double_clicked[click.button as usize] =
+    //                             clicked && click.is_double();
+    //                         response.triple_clicked[click.button as usize] =
+    //                             clicked && click.is_triple();
+    //                     }
+    //                 }
+    //             }
+    //         }
+    //     }
+    // }
 }
 
 impl Entry for Slot {
@@ -497,6 +584,14 @@ impl Entry for Slot {
         cx.slot_rect = Some(rect); // Save slot rect for use later
 
         let response = ui.allocate_rect(rect, egui::Sense::hover());
+        let response2 = ui.allocate_rect(rect, egui::Sense::click());
+
+        let clicked = ui.input().pointer.any_click()
+            && rect.contains(ui.input().pointer.interact_pos().unwrap());
+
+        if (response2.clicked()) {
+            println!("clicked");
+        }
         let mut hover_pos = response.hover_pos(); // where is the mouse hovering?
         if self.expanded {
             if self
@@ -517,7 +612,8 @@ impl Entry for Slot {
 
             let rows = self.rows();
             for tile in &self.tiles {
-                hover_pos = Self::render_tile(tile, rows, hover_pos, ui, rect, viewport, cx);
+                hover_pos =
+                    Self::render_tile(tile, rows, hover_pos, clicked, ui, rect, viewport, cx);
             }
         }
     }
@@ -861,13 +957,13 @@ impl ProfApp {
         // timeline is being drawn. So fish out the coordinates we
         // need to draw the correct rect.
         let ui_rect = ui.min_rect();
-        let slot_rect = cx.slot_rect.unwrap();
+        let slot_rect = cx.slot_rect.unwrap_or(Rect::EVERYTHING);
         let rect = Rect::from_min_max(
             Pos2::new(slot_rect.min.x, ui_rect.min.y),
             Pos2::new(slot_rect.max.x, ui_rect.max.y),
         );
 
-        let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
+        let response = ui.allocate_rect(rect, egui::Sense::drag());
 
         // Handle drag detection
         let mut drag_interval = None;
@@ -1033,7 +1129,8 @@ impl eframe::App for ProfApp {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
-            if ui.button("Reset Zoom Level").clicked() {
+            if ui.button("Reset Zoom Level").clicked() || ctx.input().key_pressed(egui::Key::Escape)
+            {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
@@ -1149,6 +1246,16 @@ impl eframe::App for ProfApp {
             }
             Self::cursor(ui, cx);
         });
+
+        // HACK: render cursor in a new frame so it doesn't conflict with widget clicks
+        // let frame = egui::containers::Frame {
+        //     fill: egui::Color32::from_rgba_premultiplied(0, 0, 0, 0),
+
+        //     ..Default::default()
+        // };
+        // egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
+        //     Self::cursor(ui, cx);
+        // });
 
         if ctx.input().key_pressed(egui::Key::ArrowLeft) {
             ProfApp::undo_zoom(cx);
