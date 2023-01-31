@@ -1,7 +1,7 @@
+use crate::timestamp::{Interval, Timestamp};
 pub use egui::Color32;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
-use crate::timestamp::{Interval, Timestamp};
 
 // We encode EntryID as i64 because it allows us to pack Summary into the
 // value -1. Users shouldn't need to know about this and interact through the
@@ -48,7 +48,7 @@ pub enum Field {
     Empty,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Item {
     pub interval: Interval,
     pub color: Color32,

@@ -1,13 +1,11 @@
-use egui::{
-    Align2, Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2,
-};
+use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::data::{DataSource, EntryID, EntryInfo, Field, Item, SlotTile, UtilPoint};
 use crate::timestamp::Interval;
-use std::collections::HashSet;
+use aho_corasick::AhoCorasick;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -107,9 +105,16 @@ struct Context {
 
     zoom_index: usize,
 
+    zoomed: u32,
+
+    #[serde(skip)]
     search: String,
 
+    #[serde(skip)]
     selected_items: Vec<Item>, // slow, should be using a HashSet
+
+    #[serde(skip)]
+    selected_node: Option<Item>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -155,13 +160,21 @@ trait Entry {
 
         ui.painter()
             .rect(rect, 0.0, visuals.bg_fill, visuals.bg_stroke);
-        ui.painter().text(
-            rect.min + style.spacing.item_spacing,
-            Align2::LEFT_TOP,
-            self.label_text(),
+        let lay = ui.painter().layout(
+            self.label_text().to_string(),
             font_id,
             visuals.text_color(),
+            rect.width() - style.spacing.item_spacing.x * 2.0,
         );
+        ui.painter()
+            .galley(rect.min + style.spacing.item_spacing, lay);
+        // ui.painter().text(
+        //     rect.min + style.spacing.item_spacing,
+        //     Align2::LEFT_TOP,
+        //     self.label_text(),
+        //     font_id,
+        //     visuals.text_color(),
+        // );
 
         if response.clicked() {
             // This will take effect next frame because we can't redraw this widget now
@@ -365,7 +378,7 @@ impl Slot {
     }
 
     fn render_tile(
-        tile: &SlotTile,
+        tile: &mut SlotTile,
         rows: u64,
         mut hover_pos: Option<Pos2>,
         clicked: bool,
@@ -375,11 +388,11 @@ impl Slot {
         viewport: Rect,
         cx: &mut Context,
     ) -> Option<Pos2> {
-        if !cx.view_interval.overlaps(tile.tile_id.0) {
+        if !cx.view_interval.overlaps(tile.tile_id.0) && cx.selected_node.is_none() {
             return hover_pos;
         }
 
-        for (row, row_items) in tile.items.iter().enumerate() {
+        for (row, row_items) in tile.items.iter_mut().enumerate() {
             // Need to reverse the rows because we're working in screen space
             let irow = rows - (row as u64) - 1;
 
@@ -392,9 +405,9 @@ impl Slot {
 
             // Cull if out of bounds
             // Note: need to shift by rect.min to get to viewport space
-            if row_max.y - rect.min.y < viewport.min.y {
+            if row_max.y - rect.min.y < viewport.min.y && cx.selected_node.is_none() {
                 break;
-            } else if row_min.y - rect.min.y > viewport.max.y {
+            } else if row_min.y - rect.min.y > viewport.max.y && cx.selected_node.is_none() {
                 continue;
             }
 
@@ -403,8 +416,8 @@ impl Slot {
             let row_hover = hover_pos.map_or(false, |h| row_rect.contains(h));
 
             // Now handle the items
-            for item in row_items {
-                if !cx.view_interval.overlaps(item.interval) {
+            for item in row_items.iter_mut() {
+                if !cx.view_interval.overlaps(item.interval) && cx.selected_node.is_none() {
                     continue;
                 }
 
@@ -417,14 +430,21 @@ impl Slot {
                 let max = rect.lerp(Vec2::new(stop, (irow as f32 + 0.95) / rows as f32));
 
                 let item_rect = Rect::from_min_max(min, max);
-                // let response = ui.allocate_rect(item_rect, egui::Sense::click());
+
+                if cx.selected_node.is_some() && cx.selected_node.as_ref().unwrap() == item {
+                    println!("found it in UI");
+                    ui.scroll_to_rect(item_rect, Some(egui::Align::Center));
+                    // set interval
+                    ProfApp::zoom(cx, item.interval);
+                    cx.selected_node = None;
+                }
 
                 if row_hover && hover_pos.map_or(false, |h| item_rect.contains(h)) {
                     hover_pos = None;
 
                     let index = cx.selected_items.iter().position(|r| r == item);
                     if index.is_some() {
-                        if (clicked) {
+                        if clicked {
                             cx.selected_items.remove(index.unwrap());
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                         } else {
@@ -436,7 +456,7 @@ impl Slot {
                             );
                         }
                     } else {
-                        if (clicked) {
+                        if clicked {
                             cx.selected_items.push(item.clone());
                             ui.painter().rect(
                                 item_rect,
@@ -490,55 +510,6 @@ impl Slot {
         }
         hover_pos
     }
-
-    // fn was_clicked(events: Vec<PointerEvent>, ctx: &mut Context) -> bool {
-    //     for pointer_event in &input.pointer.pointer_events {
-    //         match pointer_event {
-    //             PointerEvent::Moved(_) => {}
-    //             PointerEvent::Pressed { .. } => {
-    //                 if hovered {
-    //                     if sense.click && memory.interaction.click_id.is_none() {
-    //                         // potential start of a click
-    //                         memory.interaction.click_id = Some(id);
-    //                         response.is_pointer_button_down_on = true;
-    //                     }
-
-    //                     // HACK: windows have low priority on dragging.
-    //                     // This is so that if you drag a slider in a window,
-    //                     // the slider will steal the drag away from the window.
-    //                     // This is needed because we do window interaction first (to prevent frame delay),
-    //                     // and then do content layout.
-    //                     if sense.drag
-    //                         && (memory.interaction.drag_id.is_none()
-    //                             || memory.interaction.drag_is_window)
-    //                     {
-    //                         // potential start of a drag
-    //                         memory.interaction.drag_id = Some(id);
-    //                         memory.interaction.drag_is_window = false;
-    //                         memory.window_interaction = None; // HACK: stop moving windows (if any)
-    //                         response.is_pointer_button_down_on = true;
-    //                         response.dragged = true;
-    //                     }
-    //                 }
-    //             }
-    //             PointerEvent::Released(click) => {
-    //                 response.drag_released = response.dragged;
-    //                 response.dragged = false;
-
-    //                 if hovered && response.is_pointer_button_down_on {
-    //                     if let Some(click) = click {
-    //                         let clicked = hovered && response.is_pointer_button_down_on;
-    //                         response.clicked[click.button as usize] = clicked;
-    //                         response.double_clicked[click.button as usize] =
-    //                             clicked && click.is_double();
-    //                         response.triple_clicked[click.button as usize] =
-    //                             clicked && click.is_triple();
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 impl Entry for Slot {
@@ -584,14 +555,10 @@ impl Entry for Slot {
         cx.slot_rect = Some(rect); // Save slot rect for use later
 
         let response = ui.allocate_rect(rect, egui::Sense::hover());
-        let response2 = ui.allocate_rect(rect, egui::Sense::click());
 
         let clicked = ui.input().pointer.any_click()
             && rect.contains(ui.input().pointer.interact_pos().unwrap());
 
-        if (response2.clicked()) {
-            println!("clicked");
-        }
         let mut hover_pos = response.hover_pos(); // where is the mouse hovering?
         if self.expanded {
             if self
@@ -611,7 +578,7 @@ impl Entry for Slot {
                 .rect(rect, 0.0, visuals.bg_fill, visuals.bg_stroke);
 
             let rows = self.rows();
-            for tile in &self.tiles {
+            for tile in &mut self.tiles {
                 hover_pos =
                     Self::render_tile(tile, rows, hover_pos, clicked, ui, rect, viewport, cx);
             }
@@ -653,9 +620,9 @@ impl<S: Entry> Panel<S> {
 
         // Cull if out of bounds
         // Note: need to shift by rect.min to get to viewport space
-        if max_y - rect.min.y < viewport.min.y {
+        if max_y - rect.min.y < viewport.min.y && cx.selected_node.is_none() {
             return false;
-        } else if min_y - rect.min.y > viewport.max.y {
+        } else if min_y - rect.min.y > viewport.max.y && cx.selected_node.is_none() {
             return true;
         }
 
@@ -934,6 +901,7 @@ impl ProfApp {
         cx.view_interval = interval;
         cx.zoom_levels.push(cx.view_interval);
         cx.zoom_index = cx.zoom_levels.len() - 1;
+        cx.zoomed = 0;
     }
 
     fn undo_zoom(cx: &mut Context) {
@@ -942,6 +910,7 @@ impl ProfApp {
         }
         cx.zoom_index -= 1;
         cx.view_interval = cx.zoom_levels[cx.zoom_index];
+        cx.zoomed = 0;
     }
 
     fn redo_zoom(cx: &mut Context) {
@@ -950,6 +919,7 @@ impl ProfApp {
         }
         cx.zoom_index += 1;
         cx.view_interval = cx.zoom_levels[cx.zoom_index];
+        cx.zoomed = 0;
     }
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
@@ -1141,55 +1111,102 @@ impl eframe::App for ProfApp {
 
                 let text_style = TextStyle::Body;
                 let row_height = ui.text_style_height(&text_style);
-                // let num_rows = 10_000;
-
-                let search_terms: Vec<&str> = vec![
-                    "chicken",
-                    "cow",
-                    "pig",
-                    "sheep",
-                    "horse",
-                    "goat",
-                    "duck",
-                    "giraffe",
-                    "zebra",
-                    "armadillo",
-                    "silverfish",
-                    "rabbit",
-                    "guinea pig",
-                    "mouse rat",
-                    "eagle",
-                    "trex",
-                    "dove",
-                    "crow",
-                    "raven",
-                    "dolphin",
-                    "walrus",
-                ];
 
                 ui.separator();
                 ui.subheading("Search: ", cx);
-                ui.text_edit_singleline(&mut cx.search);
-                ui.separator();
 
-                let matches: Vec<&str> = if cx.search.len() > 0 {
-                    search_terms
-                        .into_iter()
-                        .filter(|item| item.contains(&cx.search))
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.button("X").clicked() {
+                        cx.search = "".to_string();
+                    }
+                    return ui.text_edit_singleline(&mut cx.search);
+                });
+                if reply.inner.changed() || cx.zoomed < 2 {
+                    // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
+                    if cx.zoomed < 2 {
+                        println!("zoomed");
+                        cx.selected_items.clear();
+                        cx.selected_node = None;
+                        println!("clearing selected items");
+                        cx.zoomed += 1;
+                    }
+                    cx.selected_items.clear();
+                    cx.selected_node = None;
+
+                    if cx.search.len() > 0 {
+                        let patterns: Vec<&str> = cx.search.split(' ').collect();
+                        let ac = AhoCorasick::new(patterns);
+                        let mut matched:bool;
+                        println!("searching for: {}", cx.search);
+                        println!("{}", windows.len());
+                        for window in windows.iter_mut() {
+                            let config = &mut window.config;
+                            for panels in window.panel.slots.iter_mut() {
+                                for panelsagain in panels.slots.iter_mut() {
+                                    for panel in panelsagain.slots.iter_mut() {
+                                        if panel.tiles.is_empty() {
+                                            panel.inflate(config, cx)
+                                        };
+                                        for item in panel.tiles.iter_mut() {
+                                            for rects in item.items.iter_mut() {
+                                                for finalrect in rects.iter_mut() {
+                                                    matched = false;
+                                                    for _mat in ac.find_iter(&finalrect.title) {
+                                                        matched = true;
+                                                    }
+                                                    if matched {
+                                                        cx.selected_items.push(finalrect.clone());
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ui.separator();
 
                 ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
                     ui,
                     row_height,
-                    matches.len(),
+                    cx.selected_items.len(),
                     |ui, row_range| {
                         for row in row_range {
-                            ui.label(
-                                RichText::new(matches[row]).color(Color32::from_rgb(128, 140, 255)),
-                            );
+                            if ui
+                                .small_button(
+                                    RichText::new(cx.selected_items[row].title.clone())
+                                        .color(Color32::from_rgb(128, 140, 255)),
+                                )
+                                .clicked()
+                            {
+                                cx.selected_node = Some(cx.selected_items[row].clone());
+                                println!("selected: {}", cx.selected_items[row].title);
+                                for window in windows.iter_mut() {
+                                    for panels in window.panel.slots.iter_mut() {
+                                        for panelsagain in panels.slots.iter_mut() {
+                                            for panel in panelsagain.slots.iter_mut() {
+                                                for item in panel.tiles.iter_mut() {
+                                                    for rects in item.items.iter_mut() {
+                                                        for finalrect in rects.iter() {
+                                                            if finalrect.clone()
+                                                                == cx.selected_items[row]
+                                                            {
+                                                                println!("found it! expanding");
+                                                                panels.expanded = true;
+                                                                panelsagain.expanded = true;
+                                                                panel.expanded = true;
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
                     },
                 );
@@ -1247,19 +1264,9 @@ impl eframe::App for ProfApp {
             Self::cursor(ui, cx);
         });
 
-        // HACK: render cursor in a new frame so it doesn't conflict with widget clicks
-        // let frame = egui::containers::Frame {
-        //     fill: egui::Color32::from_rgba_premultiplied(0, 0, 0, 0),
-
-        //     ..Default::default()
-        // };
-        // egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-        //     Self::cursor(ui, cx);
-        // });
-
-        if ctx.input().key_pressed(egui::Key::ArrowLeft) {
+        if ctx.input().key_pressed(egui::Key::ArrowLeft) && ctx.memory().focus().is_none() {
             ProfApp::undo_zoom(cx);
-        } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
+        } else if ctx.input().key_pressed(egui::Key::ArrowRight) && ctx.memory().focus().is_none() {
             ProfApp::redo_zoom(cx);
         }
     }
