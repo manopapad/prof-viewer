@@ -431,35 +431,54 @@ impl Slot {
                 let item_rect = Rect::from_min_max(min, max);
                 if row_hover && hover_pos.map_or(false, |h| item_rect.contains(h)) {
                     hover_pos = None;
-                    interact_item = Some((row, item_idx, item_rect, tile_id));
+                    let mut interact_span_idx = None;
+                    for (span_idx, span) in item.spans.iter().enumerate() {
+                        let start = cx.view_interval.unlerp(span.interval.start).at_least(0.0);
+                        let stop = cx.view_interval.unlerp(span.interval.stop).at_most(1.0);
+                        let min = rect.lerp(Vec2::new(start, (irow as f32 + 0.05) / rows as f32));
+                        let max = rect.lerp(Vec2::new(stop, (irow as f32 + 0.95) / rows as f32));
+                        let span_rect = Rect::from_min_max(min, max);
+                        if hover_pos.map_or(false, |h| span_rect.contains(h)) {
+                            interact_span_idx = Some(span_idx);
+                        }
+                    }
+                    interact_item = Some((row, item_idx, interact_span_idx, item_rect, tile_id));
                 }
                 ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
             }
         }
 
-        if let Some((row, item_idx, item_rect, tile_id)) = interact_item {
+        if let Some((row, item_idx, span_idx, item_rect, tile_id)) = interact_item {
             let tile_meta = self.fetch_meta_tile(tile_id, config);
             let item_meta = &tile_meta.items[row][item_idx];
             ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
-                ui.label(&item_meta.title);
-                for (name, field) in &item_meta.fields {
-                    match field {
-                        Field::I64(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::U64(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::String(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::Interval(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::Empty => {
-                            ui.label(name);
-                        }
+                let render_field = |ui: &mut egui::Ui, name: &str, field: &Field| match field {
+                    Field::I64(value) => {
+                        ui.label(format!("{name}: {value}"));
                     }
+                    Field::U64(value) => {
+                        ui.label(format!("{name}: {value}"));
+                    }
+                    Field::String(value) => {
+                        ui.label(format!("{name}: {value}"));
+                    }
+                    Field::Interval(value) => {
+                        ui.label(format!("{name}: {value}"));
+                    }
+                    Field::Empty => {
+                        ui.label(name);
+                    }
+                };
+
+                ui.label(&item_meta.title);
+                if let Some(span_idx) = span_idx {
+                    let span_meta = &item_meta.spans[span_idx];
+                    for (name, field) in &span_meta.fields {
+                        render_field(ui, name, field);
+                    }
+                }
+                for (name, field) in &item_meta.fields {
+                    render_field(ui, name, field);
                 }
             });
         }

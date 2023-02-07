@@ -50,15 +50,28 @@ pub enum Field {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Span {
+    pub interval: Interval,
+    pub color: Color32,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct SpanMeta {
+    pub fields: Vec<(String, Field)>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct Item {
     pub interval: Interval,
     pub color: Color32,
+    pub spans: Vec<Span>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ItemMeta {
     pub title: String,
     pub fields: Vec<(String, Field)>,
+    pub spans: Vec<SpanMeta>,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]

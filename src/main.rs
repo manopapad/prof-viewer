@@ -107,6 +107,7 @@ impl RandomDataSource {
                     row_items.push(Item {
                         interval: Interval::new(start, stop),
                         color,
+                        spans: Vec::new(),
                     });
                     row_item_metas.push(ItemMeta {
                         title: "Test Item".to_owned(),
@@ -114,6 +115,7 @@ impl RandomDataSource {
                             "Interval".to_owned(),
                             Field::Interval(Interval::new(start, stop)),
                         )],
+                        spans: Vec::new(),
                     });
                 }
                 items.push(row_items);
