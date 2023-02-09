@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
+use egui::{
+    Align2, Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2,
+};
+use serde::{Deserialize, Serialize};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
-
-use egui::{Align2, Color32, NumExt, Pos2, Rect, ScrollArea, Slider, Stroke, TextStyle, Vec2};
-use serde::{Deserialize, Serialize};
 
 use crate::data::{
     DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
@@ -104,6 +105,12 @@ struct Context {
     // data gets drawn. This gets used rendering the cursor, but we
     // only know it when we render slots. So stash it here.
     slot_rect: Option<Rect>,
+
+    zoom_levels: Vec<Interval>,
+
+    zoom_index: usize,
+
+    search: String,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -235,7 +242,6 @@ impl Entry for Summary {
         const TOOLTIP_RADIUS: f32 = 4.0;
         let response = ui.allocate_rect(rect, egui::Sense::hover());
         let hover_pos = response.hover_pos(); // where is the mouse hovering?
-
         if self
             .last_view_interval
             .map_or(true, |i| i != cx.view_interval)
@@ -374,6 +380,7 @@ impl Slot {
         tile_index: usize,
         rows: u64,
         mut hover_pos: Option<Pos2>,
+        // double_clicked: bool,
         ui: &mut egui::Ui,
         rect: Rect,
         viewport: Rect,
@@ -429,11 +436,42 @@ impl Slot {
                 let max = rect.lerp(Vec2::new(stop, (irow as f32 + 0.95) / rows as f32));
 
                 let item_rect = Rect::from_min_max(min, max);
+                // let response = ui.allocate_rect(item_rect, egui::Sense::click());
+
                 if row_hover && hover_pos.map_or(false, |h| item_rect.contains(h)) {
                     hover_pos = None;
                     interact_item = Some((row, item_idx, item_rect, tile_id));
+
+                    // if response.double_clicked() {
+                    //     println!("double clicked");
+                    // }
+                    ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
+                        ui.label(&item.title);
+                        for (name, field) in &item.fields {
+                            match field {
+                                Field::I64(value) => {
+                                    ui.label(format!("{}: {}", name, value));
+                                }
+                                Field::U64(value) => {
+                                    ui.label(format!("{}: {}", name, value));
+                                }
+                                Field::String(value) => {
+                                    ui.label(format!("{}: {}", name, value));
+                                }
+                                Field::Interval(value) => {
+                                    ui.label(format!("{}: {}", name, value));
+                                }
+                                Field::Empty => {
+                                    ui.label(name);
+                                }
+                            }
+                        }
+                    });
                 }
                 ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
+                // if double_clicked {
+                //     println!("double clicked:");
+                // }
             }
         }
 
@@ -513,7 +551,6 @@ impl Entry for Slot {
 
         let response = ui.allocate_rect(rect, egui::Sense::hover());
         let mut hover_pos = response.hover_pos(); // where is the mouse hovering?
-
         if self.expanded {
             if self
                 .last_view_interval
@@ -838,7 +875,8 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
-        result.cx.view_interval = result.cx.total_interval;
+
+        Self::zoom(&mut result.cx, window.config.interval);
 
         result.extra_source = extra_source;
 
@@ -848,6 +886,28 @@ impl ProfApp {
         }
 
         result
+    }
+
+    fn zoom(cx: &mut Context, interval: Interval) {
+        cx.view_interval = interval;
+        cx.zoom_levels.push(cx.view_interval);
+        cx.zoom_index = cx.zoom_levels.len() - 1;
+    }
+
+    fn undo_zoom(cx: &mut Context) {
+        if cx.zoom_index == 0 {
+            return;
+        }
+        cx.zoom_index -= 1;
+        cx.view_interval = cx.zoom_levels[cx.zoom_index];
+    }
+
+    fn redo_zoom(cx: &mut Context) {
+        if cx.zoom_index == cx.zoom_levels.len() - 1 {
+            return;
+        }
+        cx.zoom_index += 1;
+        cx.view_interval = cx.zoom_levels[cx.zoom_index];
     }
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
@@ -861,11 +921,12 @@ impl ProfApp {
             Pos2::new(slot_rect.max.x, ui_rect.max.y),
         );
 
-        let response = ui.allocate_rect(rect, egui::Sense::drag());
+        let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
 
         // Handle drag detection
         let mut drag_interval = None;
 
+        // println!("{}", response.clicked());
         let is_active_drag = response.dragged_by(egui::PointerButton::Primary);
         if is_active_drag && response.drag_started() {
             // On the beginning of a drag, save our position so we can
@@ -898,7 +959,7 @@ impl ProfApp {
                 // Only set view interval if the drag was a certain amount
                 const MIN_DRAG_DISTANCE: f32 = 4.0;
                 if max - min > MIN_DRAG_DISTANCE {
-                    cx.view_interval = interval;
+                    ProfApp::zoom(cx, interval)
                 }
 
                 cx.drag_origin = None;
@@ -1023,17 +1084,72 @@ impl eframe::App for ProfApp {
                 windows.push(Window::new(extra, index));
                 let window = windows.last_mut().unwrap();
                 cx.total_interval = cx.total_interval.union(window.config.interval);
-                cx.view_interval = cx.total_interval;
+                ProfApp::zoom(cx, cx.total_interval);
             }
 
             if ui.button("Reset Zoom Level").clicked() {
-                cx.view_interval = cx.total_interval;
+                ProfApp::zoom(cx, cx.total_interval);
             }
 
             egui::Frame::group(ui.style()).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.heading("Task Details");
                 ui.label("Click on a task to see it displayed here.");
+
+                let text_style = TextStyle::Body;
+                let row_height = ui.text_style_height(&text_style);
+                // let num_rows = 10_000;
+
+                let search_terms: Vec<&str> = vec![
+                    "chicken",
+                    "cow",
+                    "pig",
+                    "sheep",
+                    "horse",
+                    "goat",
+                    "duck",
+                    "giraffe",
+                    "zebra",
+                    "armadillo",
+                    "silverfish",
+                    "rabbit",
+                    "guinea pig",
+                    "mouse rat",
+                    "eagle",
+                    "trex",
+                    "dove",
+                    "crow",
+                    "raven",
+                    "dolphin",
+                    "walrus",
+                ];
+
+                ui.separator();
+                ui.subheading("Search: ", cx);
+                ui.text_edit_singleline(&mut cx.search);
+                ui.separator();
+
+                let matches: Vec<&str> = if cx.search.len() > 0 {
+                    search_terms
+                        .into_iter()
+                        .filter(|item| item.contains(&cx.search))
+                        .collect()
+                } else {
+                    vec![]
+                };
+
+                ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
+                    ui,
+                    row_height,
+                    matches.len(),
+                    |ui, row_range| {
+                        for row in row_range {
+                            ui.label(
+                                RichText::new(matches[row]).color(Color32::from_rgb(128, 140, 255)),
+                            );
+                        }
+                    },
+                );
             });
 
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
@@ -1061,6 +1177,7 @@ impl eframe::App for ProfApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Use body font to figure out how tall to draw rectangles.
+
             let font_id = TextStyle::Body.resolve(ui.style());
             let row_height = ui.fonts().row_height(&font_id);
             // Just set this on every frame for now
@@ -1084,9 +1201,14 @@ impl eframe::App for ProfApp {
                     window.content(ui, cx);
                 }
             }
-
             Self::cursor(ui, cx);
         });
+
+        if ctx.input().key_pressed(egui::Key::ArrowLeft) {
+            ProfApp::undo_zoom(cx);
+        } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
+            ProfApp::redo_zoom(cx);
+        }
     }
 }
 
