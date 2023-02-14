@@ -1,5 +1,5 @@
 use egui::{
-    Align2, Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2,
+    Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2, Visuals,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -7,8 +7,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field, Item, ItemMeta, SlotMetaTile, SlotTile, TileID,
-    UtilPoint,
+    DataSource, EntryID, EntryInfo, Field, ItemMeta, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
 use crate::timestamp::Interval;
 use aho_corasick::AhoCorasick;
@@ -114,20 +113,22 @@ struct Context {
 
     zoomed: u32,
 
+    viewing_mode: bool,
+
     #[serde(skip)]
     search: String,
 
     #[serde(skip)]
-    selected_items: BTreeMap<EntryID, Vec<ItemLoc>>,
+    highlighted_items: BTreeMap<EntryID, Vec<ItemLoc>>,
 
     #[serde(skip)]
     selected_node: Option<ItemLoc>,
 }
 
 impl Context {
-    fn add_item_loc(&mut self, item_loc: ItemLoc) {
+    fn add_highlighted_item_loc(&mut self, item_loc: ItemLoc) {
         let entry_id = item_loc.entry_id.clone();
-        let item_locs = self.selected_items.entry(entry_id).or_default();
+        let item_locs = self.highlighted_items.entry(entry_id).or_default();
         item_locs.push(item_loc);
     }
 
@@ -164,20 +165,6 @@ struct ProfApp {
     last_update: Option<Instant>,
 }
 
-fn get_entries_with_level<'a>(items: &Vec<&'a EntryID>, level: u64) -> Vec<Vec<&'a EntryID>> {
-    let mut split: Vec<Vec<&EntryID>> = vec![vec![]];
-    for entry in items {
-        let sublist = split.last_mut().unwrap();
-        match sublist.last_mut() {
-            Some(x) if entry.slot_index(level).unwrap() != x.slot_index(level).unwrap() => {
-                split.push(vec![entry]);
-            }
-            _ => sublist.push(entry),
-        }
-    }
-    split
-}
-
 trait Entry {
     fn new(info: &EntryInfo, entry_id: EntryID) -> Self;
 
@@ -203,6 +190,7 @@ trait Entry {
             *style.noninteractive()
         };
 
+        // prevent text overflow
         ui.painter()
             .rect(rect, 0.0, visuals.bg_fill, visuals.bg_stroke);
         let lay = ui.painter().layout(
@@ -213,13 +201,6 @@ trait Entry {
         );
         ui.painter()
             .galley(rect.min + style.spacing.item_spacing, lay);
-        // ui.painter().text(
-        //     rect.min + style.spacing.item_spacing,
-        //     Align2::LEFT_TOP,
-        //     self.label_text(),
-        //     font_id,
-        //     visuals.text_color(),
-        // );
 
         if response.clicked() {
             // This will take effect next frame because we can't redraw this widget now
@@ -431,16 +412,6 @@ impl Slot {
         })
     }
 
-    fn fetch_item_meta(
-        &mut self,
-        tile_id: TileID,
-        config: &mut Config,
-        item: ItemLoc,
-    ) -> &ItemMeta {
-        let tile = self.fetch_meta_tile(tile_id, config);
-        return &tile.items[item.row][item.index];
-    }
-
     #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &mut self,
@@ -517,8 +488,8 @@ impl Slot {
                     hover_pos = None;
                     interact_item = Some((row, item_idx, item_rect, tile_id));
 
-                    let index = if cx.selected_items.contains_key(&self.entry_id) {
-                        cx.selected_items[&self.entry_id]
+                    let index = if cx.highlighted_items.contains_key(&self.entry_id) {
+                        cx.highlighted_items[&self.entry_id]
                             .iter()
                             .position(|r| r.row == row && r.index == item_idx)
                     } else {
@@ -526,7 +497,7 @@ impl Slot {
                     };
                     if index.is_some() {
                         if clicked {
-                            // cx.selected_items[&tile_id].remove(index.unwrap()); TODO: FIX
+                            // cx.highlighted_items[&tile_id].remove(index.unwrap()); TODO: FIX
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                         } else {
                             ui.painter().rect(
@@ -545,12 +516,11 @@ impl Slot {
                                     .data_source
                                     .fetch_slot_meta_tile(&self.entry_id.clone(), tile_id)
                                     .items[row][item_idx]
-                                    .clone(),
+                                    .clone(), // inefficient, but necessary to pick a single item's metadata
                                 row,
                                 index: item_idx,
                             };
-                            // println!("entry id: {:?}", item_loc.entry_id);
-                            cx.add_item_loc(item_loc);
+                            cx.add_highlighted_item_loc(item_loc);
                             ui.painter().rect(
                                 item_rect,
                                 0.0,
@@ -561,31 +531,9 @@ impl Slot {
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                         }
                     }
-                    // ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
-                    //     ui.label(&item.title);
-                    //     for (name, field) in &item.fields {
-                    //         match field {
-                    //             Field::I64(value) => {
-                    //                 ui.label(format!("{}: {}", name, value));
-                    //             }
-                    //             Field::U64(value) => {
-                    //                 ui.label(format!("{}: {}", name, value));
-                    //             }
-                    //             Field::String(value) => {
-                    //                 ui.label(format!("{}: {}", name, value));
-                    //             }
-                    //             Field::Interval(value) => {
-                    //                 ui.label(format!("{}: {}", name, value));
-                    //             }
-                    //             Field::Empty => {
-                    //                 ui.label(name);
-                    //             }
-                    //         }
-                    //     }
-                    // });
                 } else {
-                    if cx.selected_items.contains_key(&self.entry_id) {
-                        let index = cx.selected_items[&self.entry_id]
+                    if cx.highlighted_items.contains_key(&self.entry_id) {
+                        let index = cx.highlighted_items[&self.entry_id]
                             .iter()
                             .position(|r| r.row == row && r.index == item_idx);
                         if index.is_some() {
@@ -905,9 +853,7 @@ impl Config {
         Self {
             min_node: 0,
             max_node,
-
             interval: data_source.interval(),
-
             data_source,
         }
     }
@@ -1007,8 +953,6 @@ impl ProfApp {
         // This is also where you can customized the look at feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
-
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
         let mut result: Self = if let Some(storage) = cc.storage {
@@ -1021,6 +965,7 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
+        result.cx.viewing_mode = true; // set to default to light mode
 
         Self::zoom(&mut result.cx, window.config.interval);
 
@@ -1163,8 +1108,6 @@ impl ProfApp {
                     ui.label(format!("t={time}"));
                 }
             });
-
-            // ui.show_tooltip_at("timestamp_tooltip", Some(top), format!("t={time}"));
         }
     }
 }
@@ -1175,7 +1118,7 @@ impl eframe::App for ProfApp {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Called each time the UI needs repainting.
+    // Called each time the UI needs repainting.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let Self {
             windows,
@@ -1236,6 +1179,18 @@ impl eframe::App for ProfApp {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
+            let visual = if cx.viewing_mode {
+                egui::Visuals::light()
+            } else {
+                egui::Visuals::dark()
+            };
+
+            let toggled = visual.light_dark_small_toggle_button(ui);
+            if toggled.is_some() {
+                ctx.set_visuals(toggled.unwrap());
+                cx.viewing_mode = !cx.viewing_mode;
+            }
+
             if ui.button("Reset Zoom Level").clicked() || ctx.input().key_pressed(egui::Key::Escape)
             {
                 ProfApp::zoom(cx, cx.total_interval);
@@ -1255,59 +1210,54 @@ impl eframe::App for ProfApp {
                 let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                     if ui.button("X").clicked() {
                         cx.search = "".to_string();
-                        cx.selected_items.clear();
+                        cx.highlighted_items.clear();
                     }
                     return ui.text_edit_singleline(&mut cx.search);
                 });
                 if reply.inner.changed() || cx.zoomed < 2 {
                     // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
                     if cx.zoomed < 2 {
-                        println!("zoomed");
-                        cx.selected_items.clear();
+                        cx.highlighted_items.clear();
                         cx.selected_node = None;
-                        println!("clearing selected items");
                         cx.zoomed += 1;
                     }
-                    cx.selected_items.clear();
+                    cx.highlighted_items.clear();
                     cx.selected_node = None;
 
                     if cx.search.len() > 0 {
-                        let patterns: Vec<&str> = cx.search.split(' ').collect();
+                        // initialize an AhoCorasick state machine
+                        let lowercase_search = cx.search.to_lowercase();
+                        let patterns: Vec<&str> = lowercase_search.split(' ').collect();
                         let ac = AhoCorasick::new(patterns);
-                        let mut matched: bool;
-                        println!("searching for: {}", cx.search);
-                        println!("{}", windows.len());
 
+                        // traverse panel tree
                         for window in windows.iter_mut() {
                             let config = &mut window.config;
-                            for panels in window.panel.slots.iter_mut() {
-                                for panelsagain in panels.slots.iter_mut() {
-                                    for panel in panelsagain.slots.iter_mut() {
-                                        if panel.tiles.is_empty() {
-                                            panel.inflate(config, cx)
+                            for node in window.panel.slots.iter_mut() {
+                                for channel in node.slots.iter_mut() {
+                                    for slot in channel.slots.iter_mut() {
+                                        if slot.tiles.is_empty() {
+                                            slot.inflate(config, cx)
                                         };
 
-                                        for tile in panel.tiles.iter_mut() {
-                                            let meta = config.data_source.fetch_slot_meta_tile(
-                                                &panel.entry_id,
-                                                tile.tile_id,
-                                            );
+                                        for tile in slot.tiles.iter_mut() {
+                                            let meta = config
+                                                .data_source
+                                                .fetch_slot_meta_tile(&slot.entry_id, tile.tile_id);
                                             for (row, i) in meta.items.iter().enumerate() {
                                                 for (idx, j) in i.iter().enumerate() {
-                                                    matched = false;
-                                                    for _mat in ac.find_iter(j.title.as_str()) {
-                                                        matched = true;
-                                                    }
-                                                    if matched {
+                                                    let potential_match =
+                                                        ac.find(j.title.as_str().to_lowercase());
+                                                    if potential_match.is_some() {
                                                         let item_loc = ItemLoc {
-                                                            entry_id: panel.entry_id.clone(),
+                                                            entry_id: slot.entry_id.clone(),
                                                             tile_id: tile.tile_id,
                                                             row: row,
                                                             index: idx,
                                                             meta: j.clone(),
                                                         };
 
-                                                        cx.add_item_loc(item_loc);
+                                                        cx.add_highlighted_item_loc(item_loc);
                                                     }
                                                 }
                                             }
@@ -1324,59 +1274,36 @@ impl eframe::App for ProfApp {
                 ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
                     ui,
                     row_height,
-                    cx.selected_items.len(),
-                    |ui, row_range| {
-                        let mut count = 0;
-
+                    cx.highlighted_items.len(),
+                    |ui, _row_range| {
                         for window in windows.iter_mut() {
-                            let top_level =
-                                get_entries_with_level(&mut cx.selected_items.keys().collect(), 0);
+                            let top_level = get_entries_with_level(
+                                &mut cx.highlighted_items.keys().collect(),
+                                0,
+                            );
                             for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
                                 // grab top_level entries of i entry_id
 
-                                let index = top_level.iter().position(|x| {
-                                    x.len() > 0 && x[0].slot_index(0).unwrap() == i as u64
-                                });
-
-                                let top_level_filter = if let Some(index) = index {
-                                    top_level[index].clone()
-                                } else {
-                                    continue;
-                                };
-
+                                let top_level_filter = get_filtered_entries(&top_level, i);
                                 let middle_level = get_entries_with_level(&top_level_filter, 1);
 
                                 ui.collapsing(nodes.long_name.to_string(), |ui| {
                                     for (j, channels) in nodes.slots.iter_mut().enumerate() {
-                                        let index = middle_level.iter().position(|x| {
-                                            x.len() > 0 && x[0].slot_index(1).unwrap() == j as u64
-                                        });
-
-                                        let middle_level_filter = if let Some(index) = index {
-                                            middle_level[index].clone()
-                                        } else {
-                                            continue;
-                                        };
-
+                                        let middle_level_filter =
+                                            get_filtered_entries(&middle_level, i);
                                         let bottom_level =
                                             get_entries_with_level(&middle_level_filter, 2);
+
                                         ui.collapsing(channels.long_name.to_string(), |ui| {
                                             for (k, slot) in channels.slots.iter_mut().enumerate() {
-                                                let index = bottom_level.iter().position(|x| {
-                                                    x.len() > 0
-                                                        && x[0].slot_index(2).unwrap() == k as u64
-                                                });
-
-                                                let bottom_level_filter = if let Some(index) = index
-                                                {
-                                                    bottom_level[index].clone()
-                                                } else {
-                                                    continue;
-                                                };
+                                                let bottom_level_filter =
+                                                    get_filtered_entries(&bottom_level, i);
 
                                                 ui.collapsing(slot.long_name.to_string(), |ui| {
                                                     for key in bottom_level_filter {
-                                                        for item in cx.selected_items[&key].iter() {
+                                                        for item in
+                                                            cx.highlighted_items[&key].iter()
+                                                        {
                                                             if ui
                                                                 .small_button(
                                                                     RichText::new(
@@ -1390,10 +1317,6 @@ impl eframe::App for ProfApp {
                                                             {
                                                                 cx.selected_node =
                                                                     Some(item.clone());
-                                                                println!(
-                                                                    "selected: {}",
-                                                                    item.meta.title
-                                                                );
                                                                 nodes.expanded = true;
                                                                 channels.expanded = true;
                                                                 slot.expanded = true;
@@ -1543,6 +1466,34 @@ impl UiExtra for egui::Ui {
             },
         );
     }
+}
+
+fn get_entries_with_level<'a>(items: &Vec<&'a EntryID>, level: u64) -> Vec<Vec<&'a EntryID>> {
+    let mut split: Vec<Vec<&EntryID>> = vec![vec![]];
+    for entry in items {
+        let sublist = split.last_mut().unwrap();
+        match sublist.last_mut() {
+            Some(x) if entry.slot_index(level).unwrap() != x.slot_index(level).unwrap() => {
+                split.push(vec![entry]);
+            }
+            _ => sublist.push(entry),
+        }
+    }
+    split
+}
+
+fn get_filtered_entries<'a>(level_entries: &Vec<Vec<&'a EntryID>>, i: usize) -> Vec<&'a EntryID> {
+    let index = level_entries
+        .iter()
+        .position(|x| x.len() > 0 && x[0].slot_index(0).unwrap() == i as u64);
+
+    let level_filter = if let Some(index) = index {
+        level_entries[index].clone()
+    } else {
+        Vec::new()
+    };
+
+    return level_filter;
 }
 
 #[cfg(not(target_arch = "wasm32"))]
