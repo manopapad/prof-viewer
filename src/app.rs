@@ -474,7 +474,6 @@ impl Slot {
                 let item_rect = Rect::from_min_max(min, max);
 
                 if cx.selected_node.is_some() && cx.compare_loc_to_selected_node(row, item_idx) {
-                    println!("found it in UI");
                     ui.scroll_to_rect(item_rect, Some(egui::Align::Center));
                     // set interval
                     ProfApp::zoom(cx, item.interval);
@@ -1279,21 +1278,25 @@ impl eframe::App for ProfApp {
                             for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
                                 // grab top_level entries of i entry_id
 
-                                let top_level_filter = get_filtered_entries(&top_level, i);
+                                let top_level_filter = get_filtered_entries(&top_level, 0, i);
                                 let middle_level = get_entries_with_level(&top_level_filter, 1);
-
+                                if middle_level.len() == 0 || middle_level[0].len() == 0 {
+                                    continue;
+                                }
                                 ui.collapsing(nodes.long_name.to_string(), |ui| {
                                     for (j, channels) in nodes.slots.iter_mut().enumerate() {
                                         let middle_level_filter =
-                                            get_filtered_entries(&middle_level, j);
+                                            get_filtered_entries(&middle_level, 1, j);
                                         let bottom_level =
                                             get_entries_with_level(&middle_level_filter, 2);
 
+                                        if bottom_level.len() == 0 || bottom_level[0].len() == 0 {
+                                            continue;
+                                        }
                                         ui.collapsing(channels.long_name.to_string(), |ui| {
                                             for (k, slot) in channels.slots.iter_mut().enumerate() {
                                                 let bottom_level_filter =
-                                                    get_filtered_entries(&bottom_level, k);
-
+                                                    get_filtered_entries(&bottom_level, 2, k);
                                                 ui.collapsing(slot.long_name.to_string(), |ui| {
                                                     for key in bottom_level_filter {
                                                         for item in
@@ -1477,10 +1480,14 @@ fn get_entries_with_level<'a>(items: &Vec<&'a EntryID>, level: u64) -> Vec<Vec<&
     split
 }
 
-fn get_filtered_entries<'a>(level_entries: &Vec<Vec<&'a EntryID>>, i: usize) -> Vec<&'a EntryID> {
+fn get_filtered_entries<'a>(
+    level_entries: &Vec<Vec<&'a EntryID>>,
+    slot_index: u64,
+    i: usize,
+) -> Vec<&'a EntryID> {
     let index = level_entries
         .iter()
-        .position(|x| x.len() > 0 && x[0].slot_index(0).unwrap() == i as u64);
+        .position(|x| x.len() > 0 && x[0].slot_index(slot_index).unwrap() == i as u64);
 
     let level_filter = if let Some(index) = index {
         level_entries[index].clone()
