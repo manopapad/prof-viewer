@@ -1,3 +1,4 @@
+use aho_corasick::AhoCorasick;
 use egui::{
     Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2, Visuals,
 };
@@ -10,7 +11,6 @@ use crate::data::{
     DataSource, EntryID, EntryInfo, Field, ItemMeta, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
 use crate::timestamp::Interval;
-use aho_corasick::AhoCorasick;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -419,7 +419,6 @@ impl Slot {
         rows: u64,
         mut hover_pos: Option<Pos2>,
         clicked: bool,
-        // double_clicked: bool,
         ui: &mut egui::Ui,
         rect: Rect,
         viewport: Rect,
@@ -497,7 +496,6 @@ impl Slot {
                     };
                     if index.is_some() {
                         if clicked {
-                            // cx.highlighted_items[&tile_id].remove(index.unwrap()); TODO: FIX
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                         } else {
                             ui.painter().rect(
@@ -1009,7 +1007,7 @@ impl ProfApp {
         // timeline is being drawn. So fish out the coordinates we
         // need to draw the correct rect.
         let ui_rect = ui.min_rect();
-        let slot_rect = cx.slot_rect.unwrap_or(Rect::EVERYTHING);
+        let slot_rect = cx.slot_rect.unwrap();
         let rect = Rect::from_min_max(
             Pos2::new(slot_rect.min.x, ui_rect.min.y),
             Pos2::new(slot_rect.max.x, ui_rect.max.y),
@@ -1020,7 +1018,6 @@ impl ProfApp {
         // Handle drag detection
         let mut drag_interval = None;
 
-        // println!("{}", response.clicked());
         let is_active_drag = response.dragged_by(egui::PointerButton::Primary);
         if is_active_drag && response.drag_started() {
             // On the beginning of a drag, save our position so we can
@@ -1185,9 +1182,9 @@ impl eframe::App for ProfApp {
                 egui::Visuals::dark()
             };
 
-            let toggled = visual.light_dark_small_toggle_button(ui);
-            if toggled.is_some() {
-                ctx.set_visuals(toggled.unwrap());
+            // swap to dark mode
+            if let Some(toggled) = visual.light_dark_small_toggle_button(ui) {
+                ctx.set_visuals(toggled);
                 cx.viewing_mode = !cx.viewing_mode;
             }
 
