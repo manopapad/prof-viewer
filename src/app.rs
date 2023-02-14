@@ -1,7 +1,5 @@
 use aho_corasick::AhoCorasick;
-use egui::{
-    Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2, Visuals,
-};
+use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -1287,14 +1285,14 @@ impl eframe::App for ProfApp {
                                 ui.collapsing(nodes.long_name.to_string(), |ui| {
                                     for (j, channels) in nodes.slots.iter_mut().enumerate() {
                                         let middle_level_filter =
-                                            get_filtered_entries(&middle_level, i);
+                                            get_filtered_entries(&middle_level, j);
                                         let bottom_level =
                                             get_entries_with_level(&middle_level_filter, 2);
 
                                         ui.collapsing(channels.long_name.to_string(), |ui| {
                                             for (k, slot) in channels.slots.iter_mut().enumerate() {
                                                 let bottom_level_filter =
-                                                    get_filtered_entries(&bottom_level, i);
+                                                    get_filtered_entries(&bottom_level, k);
 
                                                 ui.collapsing(slot.long_name.to_string(), |ui| {
                                                     for key in bottom_level_filter {
