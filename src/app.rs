@@ -1,16 +1,17 @@
-use std::collections::BTreeMap;
 use egui::{
     Align2, Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2,
 };
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field,Item, SlotMetaTile, SlotTile, TileID, UtilPoint,
+    DataSource, EntryID, EntryInfo, Field, Item, ItemMeta, SlotMetaTile, SlotTile, TileID,
+    UtilPoint,
 };
 use crate::timestamp::Interval;
-use std::collections::HashSet;
+use aho_corasick::AhoCorasick;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -111,9 +112,40 @@ struct Context {
 
     zoom_index: usize,
 
+    zoomed: u32,
+
+    #[serde(skip)]
     search: String,
 
-    selected_items: Vec<Item>, // slow, should be using a HashSet
+    #[serde(skip)]
+    selected_items: BTreeMap<EntryID, Vec<ItemLoc>>,
+
+    #[serde(skip)]
+    selected_node: Option<ItemLoc>,
+}
+
+impl Context {
+    fn add_item_loc(&mut self, item_loc: ItemLoc) {
+        let entry_id = item_loc.entry_id.clone();
+        let item_locs = self.selected_items.entry(entry_id).or_default();
+        item_locs.push(item_loc);
+    }
+
+    fn compare_loc_to_selected_node(&self, row: usize, index: usize) -> bool {
+        if let Some(selected_node) = &self.selected_node {
+            return selected_node.row == row && selected_node.index == index;
+        }
+        return false;
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+struct ItemLoc {
+    entry_id: EntryID,
+    tile_id: TileID,
+    meta: ItemMeta,
+    row: usize,
+    index: usize,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -130,6 +162,20 @@ struct ProfApp {
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     last_update: Option<Instant>,
+}
+
+fn get_entries_with_level<'a>(items: &Vec<&'a EntryID>, level: u64) -> Vec<Vec<&'a EntryID>> {
+    let mut split: Vec<Vec<&EntryID>> = vec![vec![]];
+    for entry in items {
+        let sublist = split.last_mut().unwrap();
+        match sublist.last_mut() {
+            Some(x) if entry.slot_index(level).unwrap() != x.slot_index(level).unwrap() => {
+                split.push(vec![entry]);
+            }
+            _ => sublist.push(entry),
+        }
+    }
+    split
 }
 
 trait Entry {
@@ -159,13 +205,21 @@ trait Entry {
 
         ui.painter()
             .rect(rect, 0.0, visuals.bg_fill, visuals.bg_stroke);
-        ui.painter().text(
-            rect.min + style.spacing.item_spacing,
-            Align2::LEFT_TOP,
-            self.label_text(),
+        let lay = ui.painter().layout(
+            self.label_text().to_string(),
             font_id,
             visuals.text_color(),
+            rect.width() - style.spacing.item_spacing.x * 2.0,
         );
+        ui.painter()
+            .galley(rect.min + style.spacing.item_spacing, lay);
+        // ui.painter().text(
+        //     rect.min + style.spacing.item_spacing,
+        //     Align2::LEFT_TOP,
+        //     self.label_text(),
+        //     font_id,
+        //     visuals.text_color(),
+        // );
 
         if response.clicked() {
             // This will take effect next frame because we can't redraw this widget now
@@ -377,6 +431,16 @@ impl Slot {
         })
     }
 
+    fn fetch_item_meta(
+        &mut self,
+        tile_id: TileID,
+        config: &mut Config,
+        item: ItemLoc,
+    ) -> &ItemMeta {
+        let tile = self.fetch_meta_tile(tile_id, config);
+        return &tile.items[item.row][item.index];
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn render_tile(
         &mut self,
@@ -395,7 +459,7 @@ impl Slot {
         let tile = &self.tiles[tile_index];
         let tile_id = tile.tile_id;
 
-        if !cx.view_interval.overlaps(tile_id.0) {
+        if !cx.view_interval.overlaps(tile_id.0) && cx.selected_node.is_none() {
             return hover_pos;
         }
 
@@ -415,9 +479,9 @@ impl Slot {
 
             // Cull if out of bounds
             // Note: need to shift by rect.min to get to viewport space
-            if row_max.y - rect.min.y < viewport.min.y {
+            if row_max.y - rect.min.y < viewport.min.y && cx.selected_node.is_none() {
                 break;
-            } else if row_min.y - rect.min.y > viewport.max.y {
+            } else if row_min.y - rect.min.y > viewport.max.y && cx.selected_node.is_none() {
                 continue;
             }
 
@@ -440,16 +504,29 @@ impl Slot {
                 let max = rect.lerp(Vec2::new(stop, (irow as f32 + 0.95) / rows as f32));
 
                 let item_rect = Rect::from_min_max(min, max);
-                // let response = ui.allocate_rect(item_rect, egui::Sense::click());
+
+                if cx.selected_node.is_some() && cx.compare_loc_to_selected_node(row, item_idx) {
+                    println!("found it in UI");
+                    ui.scroll_to_rect(item_rect, Some(egui::Align::Center));
+                    // set interval
+                    ProfApp::zoom(cx, item.interval);
+                    cx.selected_node = None;
+                }
 
                 if row_hover && hover_pos.map_or(false, |h| item_rect.contains(h)) {
                     hover_pos = None;
                     interact_item = Some((row, item_idx, item_rect, tile_id));
 
-                    let index = cx.selected_items.iter().position(|r| r == item);
+                    let index = if cx.selected_items.contains_key(&self.entry_id) {
+                        cx.selected_items[&self.entry_id]
+                            .iter()
+                            .position(|r| r.row == row && r.index == item_idx)
+                    } else {
+                        None
+                    };
                     if index.is_some() {
-                        if (clicked) {
-                            cx.selected_items.remove(index.unwrap());
+                        if clicked {
+                            // cx.selected_items[&tile_id].remove(index.unwrap()); TODO: FIX
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                         } else {
                             ui.painter().rect(
@@ -460,8 +537,20 @@ impl Slot {
                             );
                         }
                     } else {
-                        if (clicked) {
-                            cx.selected_items.push(item.clone());
+                        if clicked {
+                            let item_loc = ItemLoc {
+                                entry_id: self.entry_id.clone(),
+                                tile_id,
+                                meta: config
+                                    .data_source
+                                    .fetch_slot_meta_tile(&self.entry_id.clone(), tile_id)
+                                    .items[row][item_idx]
+                                    .clone(),
+                                row,
+                                index: item_idx,
+                            };
+                            // println!("entry id: {:?}", item_loc.entry_id);
+                            cx.add_item_loc(item_loc);
                             ui.painter().rect(
                                 item_rect,
                                 0.0,
@@ -495,21 +584,24 @@ impl Slot {
                     //     }
                     // });
                 } else {
-                    let index = cx.selected_items.iter().position(|r| r == item);
-                    if index.is_some() {
-                        ui.painter().rect(
-                            item_rect,
-                            0.0,
-                            item.color,
-                            Stroke::new(2.0, Color32::WHITE),
-                        );
+                    if cx.selected_items.contains_key(&self.entry_id) {
+                        let index = cx.selected_items[&self.entry_id]
+                            .iter()
+                            .position(|r| r.row == row && r.index == item_idx);
+                        if index.is_some() {
+                            ui.painter().rect(
+                                item_rect,
+                                0.0,
+                                item.color,
+                                Stroke::new(2.0, Color32::WHITE),
+                            );
+                        } else {
+                            ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
+                        }
                     } else {
                         ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                     }
                 }
-                // if double_clicked {
-                //     println!("double clicked:");
-                // }
             }
         }
 
@@ -542,55 +634,6 @@ impl Slot {
 
         hover_pos
     }
-
-    // fn was_clicked(events: Vec<PointerEvent>, ctx: &mut Context) -> bool {
-    //     for pointer_event in &input.pointer.pointer_events {
-    //         match pointer_event {
-    //             PointerEvent::Moved(_) => {}
-    //             PointerEvent::Pressed { .. } => {
-    //                 if hovered {
-    //                     if sense.click && memory.interaction.click_id.is_none() {
-    //                         // potential start of a click
-    //                         memory.interaction.click_id = Some(id);
-    //                         response.is_pointer_button_down_on = true;
-    //                     }
-
-    //                     // HACK: windows have low priority on dragging.
-    //                     // This is so that if you drag a slider in a window,
-    //                     // the slider will steal the drag away from the window.
-    //                     // This is needed because we do window interaction first (to prevent frame delay),
-    //                     // and then do content layout.
-    //                     if sense.drag
-    //                         && (memory.interaction.drag_id.is_none()
-    //                             || memory.interaction.drag_is_window)
-    //                     {
-    //                         // potential start of a drag
-    //                         memory.interaction.drag_id = Some(id);
-    //                         memory.interaction.drag_is_window = false;
-    //                         memory.window_interaction = None; // HACK: stop moving windows (if any)
-    //                         response.is_pointer_button_down_on = true;
-    //                         response.dragged = true;
-    //                     }
-    //                 }
-    //             }
-    //             PointerEvent::Released(click) => {
-    //                 response.drag_released = response.dragged;
-    //                 response.dragged = false;
-
-    //                 if hovered && response.is_pointer_button_down_on {
-    //                     if let Some(click) = click {
-    //                         let clicked = hovered && response.is_pointer_button_down_on;
-    //                         response.clicked[click.button as usize] = clicked;
-    //                         response.double_clicked[click.button as usize] =
-    //                             clicked && click.is_double();
-    //                         response.triple_clicked[click.button as usize] =
-    //                             clicked && click.is_triple();
-    //                     }
-    //                 }
-    //             }
-    //         }
-    //     }
-    // }
 }
 
 impl Entry for Slot {
@@ -637,15 +680,16 @@ impl Entry for Slot {
         cx.slot_rect = Some(rect); // Save slot rect for use later
 
         let response = ui.allocate_rect(rect, egui::Sense::hover());
-        let response2 = ui.allocate_rect(rect, egui::Sense::click());
 
         let clicked = ui.input().pointer.any_click()
             && rect.contains(ui.input().pointer.interact_pos().unwrap());
 
-        if (response2.clicked()) {
-            println!("clicked");
-        }
         let mut hover_pos = response.hover_pos(); // where is the mouse hovering?
+
+        if cx.selected_node.is_some() && cx.selected_node.clone().unwrap().entry_id == self.entry_id
+        {
+            self.expanded = true
+        }
         if self.expanded {
             if self
                 .last_view_interval
@@ -665,8 +709,9 @@ impl Entry for Slot {
 
             let rows = self.rows();
             for tile_index in 0..self.tiles.len() {
-                hover_pos =
-                    self.render_tile(tile_index, rows, hover_pos, clicked, ui, rect, viewport, config, cx);
+                hover_pos = self.render_tile(
+                    tile_index, rows, hover_pos, clicked, ui, rect, viewport, config, cx,
+                );
             }
         }
     }
@@ -706,9 +751,9 @@ impl<S: Entry> Panel<S> {
 
         // Cull if out of bounds
         // Note: need to shift by rect.min to get to viewport space
-        if max_y - rect.min.y < viewport.min.y {
+        if max_y - rect.min.y < viewport.min.y && cx.selected_node.is_none() {
             return false;
-        } else if min_y - rect.min.y > viewport.max.y {
+        } else if min_y - rect.min.y > viewport.max.y && cx.selected_node.is_none() {
             return true;
         }
 
@@ -795,6 +840,10 @@ impl<S: Entry> Entry for Panel<S> {
             Self::render(ui, rect, viewport, summary, &mut y, config, cx);
         }
 
+        if cx.selected_node.is_some() && cx.selected_node.clone().unwrap().entry_id == self.entry_id
+        {
+            self.expanded = true
+        }
         if self.expanded {
             for slot in &mut self.slots {
                 // Apply visibility settings
@@ -987,6 +1036,7 @@ impl ProfApp {
         cx.view_interval = interval;
         cx.zoom_levels.push(cx.view_interval);
         cx.zoom_index = cx.zoom_levels.len() - 1;
+        cx.zoomed = 0;
     }
 
     fn undo_zoom(cx: &mut Context) {
@@ -995,6 +1045,7 @@ impl ProfApp {
         }
         cx.zoom_index -= 1;
         cx.view_interval = cx.zoom_levels[cx.zoom_index];
+        cx.zoomed = 0;
     }
 
     fn redo_zoom(cx: &mut Context) {
@@ -1003,6 +1054,7 @@ impl ProfApp {
         }
         cx.zoom_index += 1;
         cx.view_interval = cx.zoom_levels[cx.zoom_index];
+        cx.zoomed = 0;
     }
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
@@ -1194,55 +1246,164 @@ impl eframe::App for ProfApp {
 
                 let text_style = TextStyle::Body;
                 let row_height = ui.text_style_height(&text_style);
-                // let num_rows = 10_000;
-
-                let search_terms: Vec<&str> = vec![
-                    "chicken",
-                    "cow",
-                    "pig",
-                    "sheep",
-                    "horse",
-                    "goat",
-                    "duck",
-                    "giraffe",
-                    "zebra",
-                    "armadillo",
-                    "silverfish",
-                    "rabbit",
-                    "guinea pig",
-                    "mouse rat",
-                    "eagle",
-                    "trex",
-                    "dove",
-                    "crow",
-                    "raven",
-                    "dolphin",
-                    "walrus",
-                ];
 
                 ui.separator();
                 ui.subheading("Search: ", cx);
-                ui.text_edit_singleline(&mut cx.search);
-                ui.separator();
 
-                let matches: Vec<&str> = if cx.search.len() > 0 {
-                    search_terms
-                        .into_iter()
-                        .filter(|item| item.contains(&cx.search))
-                        .collect()
-                } else {
-                    vec![]
-                };
+                let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    if ui.button("X").clicked() {
+                        cx.search = "".to_string();
+                        cx.selected_items.clear();
+                    }
+                    return ui.text_edit_singleline(&mut cx.search);
+                });
+                if reply.inner.changed() || cx.zoomed < 2 {
+                    // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
+                    if cx.zoomed < 2 {
+                        println!("zoomed");
+                        cx.selected_items.clear();
+                        cx.selected_node = None;
+                        println!("clearing selected items");
+                        cx.zoomed += 1;
+                    }
+                    cx.selected_items.clear();
+                    cx.selected_node = None;
+
+                    if cx.search.len() > 0 {
+                        let patterns: Vec<&str> = cx.search.split(' ').collect();
+                        let ac = AhoCorasick::new(patterns);
+                        let mut matched: bool;
+                        println!("searching for: {}", cx.search);
+                        println!("{}", windows.len());
+
+                        for window in windows.iter_mut() {
+                            let config = &mut window.config;
+                            for panels in window.panel.slots.iter_mut() {
+                                for panelsagain in panels.slots.iter_mut() {
+                                    for panel in panelsagain.slots.iter_mut() {
+                                        if panel.tiles.is_empty() {
+                                            panel.inflate(config, cx)
+                                        };
+
+                                        for tile in panel.tiles.iter_mut() {
+                                            let meta = config.data_source.fetch_slot_meta_tile(
+                                                &panel.entry_id,
+                                                tile.tile_id,
+                                            );
+                                            for (row, i) in meta.items.iter().enumerate() {
+                                                for (idx, j) in i.iter().enumerate() {
+                                                    matched = false;
+                                                    for _mat in ac.find_iter(j.title.as_str()) {
+                                                        matched = true;
+                                                    }
+                                                    if matched {
+                                                        let item_loc = ItemLoc {
+                                                            entry_id: panel.entry_id.clone(),
+                                                            tile_id: tile.tile_id,
+                                                            row: row,
+                                                            index: idx,
+                                                            meta: j.clone(),
+                                                        };
+
+                                                        cx.add_item_loc(item_loc);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ui.separator();
 
                 ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
                     ui,
                     row_height,
-                    matches.len(),
+                    cx.selected_items.len(),
                     |ui, row_range| {
-                        for row in row_range {
-                            ui.label(
-                                RichText::new(matches[row]).color(Color32::from_rgb(128, 140, 255)),
-                            );
+                        let mut count = 0;
+
+                        for window in windows.iter_mut() {
+                            let top_level =
+                                get_entries_with_level(&mut cx.selected_items.keys().collect(), 0);
+                            for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
+                                // grab top_level entries of i entry_id
+
+                                let index = top_level.iter().position(|x| {
+                                    x.len() > 0 && x[0].slot_index(0).unwrap() == i as u64
+                                });
+
+                                let top_level_filter = if let Some(index) = index {
+                                    top_level[index].clone()
+                                } else {
+                                    continue;
+                                };
+
+                                let middle_level = get_entries_with_level(&top_level_filter, 1);
+
+                                ui.collapsing(nodes.long_name.to_string(), |ui| {
+                                    for (j, channels) in nodes.slots.iter_mut().enumerate() {
+                                        let index = middle_level.iter().position(|x| {
+                                            x.len() > 0 && x[0].slot_index(1).unwrap() == j as u64
+                                        });
+
+                                        let middle_level_filter = if let Some(index) = index {
+                                            middle_level[index].clone()
+                                        } else {
+                                            continue;
+                                        };
+
+                                        let bottom_level =
+                                            get_entries_with_level(&middle_level_filter, 2);
+                                        ui.collapsing(channels.long_name.to_string(), |ui| {
+                                            for (k, slot) in channels.slots.iter_mut().enumerate() {
+                                                let index = bottom_level.iter().position(|x| {
+                                                    x.len() > 0
+                                                        && x[0].slot_index(2).unwrap() == k as u64
+                                                });
+
+                                                let bottom_level_filter = if let Some(index) = index
+                                                {
+                                                    bottom_level[index].clone()
+                                                } else {
+                                                    continue;
+                                                };
+
+                                                ui.collapsing(slot.long_name.to_string(), |ui| {
+                                                    for key in bottom_level_filter {
+                                                        for item in cx.selected_items[&key].iter() {
+                                                            if ui
+                                                                .small_button(
+                                                                    RichText::new(
+                                                                        item.meta.title.clone(),
+                                                                    )
+                                                                    .color(Color32::from_rgb(
+                                                                        128, 140, 255,
+                                                                    )),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                cx.selected_node =
+                                                                    Some(item.clone());
+                                                                println!(
+                                                                    "selected: {}",
+                                                                    item.meta.title
+                                                                );
+                                                                nodes.expanded = true;
+                                                                channels.expanded = true;
+                                                                slot.expanded = true;
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        });
+                                    }
+                                });
+                            }
                         }
                     },
                 );
@@ -1300,19 +1461,9 @@ impl eframe::App for ProfApp {
             Self::cursor(ui, cx);
         });
 
-        // HACK: render cursor in a new frame so it doesn't conflict with widget clicks
-        // let frame = egui::containers::Frame {
-        //     fill: egui::Color32::from_rgba_premultiplied(0, 0, 0, 0),
-
-        //     ..Default::default()
-        // };
-        // egui::CentralPanel::default().frame(frame).show(ctx, |ui| {
-        //     Self::cursor(ui, cx);
-        // });
-
-        if ctx.input().key_pressed(egui::Key::ArrowLeft) {
+        if ctx.input().key_pressed(egui::Key::ArrowLeft) && ctx.memory().focus().is_none() {
             ProfApp::undo_zoom(cx);
-        } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
+        } else if ctx.input().key_pressed(egui::Key::ArrowRight) && ctx.memory().focus().is_none() {
             ProfApp::redo_zoom(cx);
         }
     }
