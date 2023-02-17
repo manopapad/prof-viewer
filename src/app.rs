@@ -494,14 +494,10 @@ impl Slot {
                     if index.is_some() {
                         if clicked {
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
-                            cx.highlighted_items.insert(
-                                self.entry_id.clone(),
-                                cx.highlighted_items[&self.entry_id]
-                                    .clone()
-                                    .into_iter()
-                                    .filter(|r| r.row != row || r.index != item_idx)
-                                    .collect(),
-                            );
+                            cx.highlighted_items
+                                .get_mut(&self.entry_id)
+                                .unwrap()
+                                .remove(index.unwrap());
                         } else {
                             ui.painter().rect(
                                 item_rect,
