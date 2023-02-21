@@ -6,9 +6,12 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field, ItemMeta, ItemUID, SlotMetaTile, SlotTile, TileID, UtilPoint,
+    DataSource, EntryID, EntryInfo, Field, ItemMeta, ItemUID, SlotMetaTile, SlotTile, TileID,
+    UtilPoint,
 };
 use crate::timestamp::Interval;
+
+use std::collections::HashSet;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -39,6 +42,8 @@ use crate::timestamp::Interval;
 /// Slot:
 ///   * One Slot for each processor, channel, memory
 ///   * Viewer widget for items
+
+const MAX_SELECTED_ITEMS: u64 = 1000;
 
 struct Summary {
     entry_id: EntryID,
@@ -117,7 +122,12 @@ struct Context {
     search: String,
 
     #[serde(skip)]
+    num_matches: u64,
+
+    #[serde(skip)]
     highlighted_items: BTreeMap<EntryID, Vec<ItemLoc>>,
+
+    entries_highlighted: HashSet<EntryID>,
 
     #[serde(skip)]
     selected_node: Option<ItemLoc>,
@@ -126,15 +136,18 @@ struct Context {
 impl Context {
     fn add_highlighted_item_loc(&mut self, item_loc: ItemLoc) {
         let entry_id = item_loc.entry_id.clone();
-        let item_locs = self.highlighted_items.entry(entry_id).or_default();
+        let item_locs = self.highlighted_items.entry(entry_id.clone()).or_default();
         item_locs.push(item_loc);
-    }
+        let mut entry = EntryID::root();
 
-    fn compare_loc_to_selected_node(&self, row: usize, index: usize) -> bool {
-        if let Some(selected_node) = &self.selected_node {
-            return selected_node.row == row && selected_node.index == index;
+        let mut i = 0;
+        while i < entry_id.level() {
+            if let Some(depth) = entry_id.slot_index(i) {
+                entry = entry.child(depth);
+                self.entries_highlighted.insert(entry.clone());
+            }
+            i += 1;
         }
-        false
     }
 }
 
@@ -474,7 +487,9 @@ impl Slot {
 
                 let item_rect = Rect::from_min_max(min, max);
 
-                if cx.selected_node.is_some() && cx.compare_loc_to_selected_node(row, item_idx) {
+                if cx.selected_node.is_some()
+                    && cx.selected_node.as_ref().unwrap().item_uid == item.item_uid
+                {
                     ui.scroll_to_rect(item_rect, Some(egui::Align::Center));
                     // set interval
                     ProfApp::zoom(cx, item.interval);
@@ -488,7 +503,7 @@ impl Slot {
                     let index = if cx.highlighted_items.contains_key(&self.entry_id) {
                         cx.highlighted_items[&self.entry_id]
                             .iter()
-                            .position(|r| r.row == row && r.index == item_idx)
+                            .position(|r| r.item_uid == item.item_uid)
                     } else {
                         None
                     };
@@ -533,7 +548,7 @@ impl Slot {
                 } else if cx.highlighted_items.contains_key(&self.entry_id) {
                     let index = cx.highlighted_items[&self.entry_id]
                         .iter()
-                        .position(|r| r.row == row && r.index == item_idx);
+                        .position(|r| r.item_uid == item.item_uid);
                     if index.is_some() {
                         ui.painter().rect(
                             item_rect,
@@ -555,6 +570,7 @@ impl Slot {
             let item_meta = &tile_meta.items[row][item_idx];
             ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
                 ui.label(&item_meta.title);
+                ui.label(format!("Item UID: {}", item_meta.item_uid));
                 for (name, field) in &item_meta.fields {
                     match field {
                         Field::I64(value) => {
@@ -1207,25 +1223,30 @@ impl eframe::App for ProfApp {
                     if ui.button("X").clicked() {
                         cx.search = "".to_string();
                         cx.highlighted_items.clear();
+                        cx.entries_highlighted.clear();
                     }
                     ui.text_edit_singleline(&mut cx.search)
                 });
+
                 if reply.inner.changed() || cx.zoomed < 2 {
                     // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
                     if cx.zoomed < 2 {
                         cx.highlighted_items.clear();
+                        cx.entries_highlighted.clear();
                         cx.selected_node = None;
                         cx.zoomed += 1;
                     }
                     cx.highlighted_items.clear();
+                    cx.entries_highlighted.clear();
                     cx.selected_node = None;
+                    cx.num_matches = 0;
 
                     if !cx.search.is_empty() {
                         // initialize an AhoCorasick state machine
                         let lowercase_search = cx.search.to_lowercase();
-                        let patterns: Vec<&str> = lowercase_search.split(' ').collect();
+                        let patterns: Vec<&str> =
+                            lowercase_search.split(' ').filter(|x| x != &"").collect();
                         let ac = AhoCorasick::new(patterns);
-
                         // traverse panel tree
                         for window in windows.iter_mut() {
                             let config = &mut window.config;
@@ -1255,6 +1276,7 @@ impl eframe::App for ProfApp {
                                                         };
 
                                                         cx.add_highlighted_item_loc(item_loc);
+                                                        cx.num_matches += 1;
                                                     }
                                                 }
                                             }
@@ -1265,6 +1287,20 @@ impl eframe::App for ProfApp {
                         }
                     }
                 }
+                if !cx.search.is_empty() {
+                    let exceeded_max = cx.num_matches > MAX_SELECTED_ITEMS;
+                    let asterisk = if exceeded_max { "*" } else { "" };
+                    let es = if cx.num_matches == 1 { "" } else { "es" };
+                    ui.label(format!(
+                        "Found {matches} match{es}{asterisk}",
+                        matches = cx.num_matches
+                    ));
+                    if exceeded_max {
+                        ui.label(format!(
+                            "* Only displaying the first {MAX_SELECTED_ITEMS} matches",
+                        ));
+                    }
+                }
 
                 ui.separator();
 
@@ -1273,14 +1309,18 @@ impl eframe::App for ProfApp {
                     row_height,
                     cx.highlighted_items.len(),
                     |ui, _row_range| {
+                        let mut count = 0;
                         for window in windows.iter_mut() {
-                            let top_level = get_entries_with_level(
-                                &mut cx.highlighted_items.keys().collect(),
-                                0,
-                            );
+                            let top_level =
+                                get_entries_with_level(&cx.highlighted_items.keys().collect(), 0);
                             for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
                                 // grab top_level entries of i entry_id
 
+                                let top_entry = EntryID::root().child(i as u64);
+
+                                if !cx.entries_highlighted.contains(&top_entry) {
+                                    continue;
+                                }
                                 let top_level_filter = get_filtered_entries(&top_level, 0, i);
                                 let middle_level = get_entries_with_level(&top_level_filter, 1);
                                 if middle_level.is_empty() || middle_level[0].is_empty() {
@@ -1288,6 +1328,10 @@ impl eframe::App for ProfApp {
                                 }
                                 ui.collapsing(nodes.long_name.to_string(), |ui| {
                                     for (j, channels) in nodes.slots.iter_mut().enumerate() {
+                                        let middle_entry = top_entry.child(j as u64);
+                                        if !cx.entries_highlighted.contains(&middle_entry) {
+                                            continue;
+                                        }
                                         let middle_level_filter =
                                             get_filtered_entries(&middle_level, 1, j);
                                         let bottom_level =
@@ -1298,13 +1342,25 @@ impl eframe::App for ProfApp {
                                         }
                                         ui.collapsing(channels.long_name.to_string(), |ui| {
                                             for (k, slot) in channels.slots.iter_mut().enumerate() {
+                                                let bottom_entry = middle_entry.child(k as u64);
+                                                if !cx.entries_highlighted.contains(&bottom_entry) {
+                                                    continue;
+                                                }
                                                 let bottom_level_filter =
                                                     get_filtered_entries(&bottom_level, 2, k);
+
+                                                if bottom_level_filter.is_empty()
+                                                    || bottom_level[0].is_empty()
+                                                {
+                                                    continue;
+                                                }
                                                 ui.collapsing(slot.long_name.to_string(), |ui| {
                                                     for key in bottom_level_filter {
-                                                        for item in
-                                                            cx.highlighted_items[key].iter()
+                                                        for item in cx.highlighted_items[key].iter()
                                                         {
+                                                            if count > 1000 {
+                                                                break;
+                                                            }
                                                             if ui
                                                                 .small_button(
                                                                     RichText::new(
@@ -1321,6 +1377,7 @@ impl eframe::App for ProfApp {
                                                                 nodes.expanded = true;
                                                                 channels.expanded = true;
                                                                 slot.expanded = true;
+                                                                count += 1;
                                                             }
                                                         }
                                                     }
@@ -1491,8 +1548,6 @@ fn get_filtered_entries<'a>(
     let index = level_entries
         .iter()
         .position(|x| !x.is_empty() && x[0].slot_index(slot_index).unwrap() == i as u64);
-
-    
 
     if let Some(index) = index {
         level_entries[index].clone()

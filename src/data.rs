@@ -1,12 +1,12 @@
 use crate::timestamp::{Interval, Timestamp};
 pub use egui::{Color32, Rgba};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::{collections::BTreeSet, fmt::Display, fmt::Formatter};
 
 // We encode EntryID as i64 because it allows us to pack Summary into the
 // value -1. Users shouldn't need to know about this and interact through the
 // methods below, or via EntryIndex.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
 pub struct EntryID(Vec<i64>);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -194,5 +194,11 @@ impl EntryInfo {
             return result;
         }
         unreachable!()
+    }
+}
+
+impl Display for ItemUID {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
     }
 }
