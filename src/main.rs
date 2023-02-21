@@ -131,6 +131,7 @@ impl RandomDataSource {
                     });
                     row_item_metas.push(ItemMeta {
                         title: "Test Item".to_owned(),
+                        item_uid,
                         fields: vec![
                             (
                                 "Interval".to_owned(),

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use std::time::Instant;
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field, ItemMeta, SlotMetaTile, SlotTile, TileID, UtilPoint,
+    DataSource, EntryID, EntryInfo, Field, ItemMeta, ItemUID, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
 use crate::timestamp::Interval;
 
@@ -134,7 +134,7 @@ impl Context {
         if let Some(selected_node) = &self.selected_node {
             return selected_node.row == row && selected_node.index == index;
         }
-        return false;
+        false
     }
 }
 
@@ -142,6 +142,7 @@ impl Context {
 struct ItemLoc {
     entry_id: EntryID,
     tile_id: TileID,
+    item_uid: ItemUID,
     meta: ItemMeta,
     row: usize,
     index: usize,
@@ -506,48 +507,45 @@ impl Slot {
                                 Stroke::new(2.0, Color32::WHITE),
                             );
                         }
-                    } else {
-                        if clicked {
-                            let item_loc = ItemLoc {
-                                entry_id: self.entry_id.clone(),
-                                tile_id,
-                                meta: config
-                                    .data_source
-                                    .fetch_slot_meta_tile(&self.entry_id.clone(), tile_id)
-                                    .items[row][item_idx]
-                                    .clone(), // inefficient, but necessary to pick a single item's metadata
-                                row,
-                                index: item_idx,
-                            };
-                            cx.add_highlighted_item_loc(item_loc);
-                            ui.painter().rect(
-                                item_rect,
-                                0.0,
-                                item.color,
-                                Stroke::new(2.0, Color32::WHITE),
-                            );
-                        } else {
-                            ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
-                        }
-                    }
-                } else {
-                    if cx.highlighted_items.contains_key(&self.entry_id) {
-                        let index = cx.highlighted_items[&self.entry_id]
-                            .iter()
-                            .position(|r| r.row == row && r.index == item_idx);
-                        if index.is_some() {
-                            ui.painter().rect(
-                                item_rect,
-                                0.0,
-                                item.color,
-                                Stroke::new(2.0, Color32::WHITE),
-                            );
-                        } else {
-                            ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
-                        }
+                    } else if clicked {
+                        let item_loc = ItemLoc {
+                            entry_id: self.entry_id.clone(),
+                            tile_id,
+                            meta: config
+                                .data_source
+                                .fetch_slot_meta_tile(&self.entry_id.clone(), tile_id)
+                                .items[row][item_idx]
+                                .clone(), // inefficient, but necessary to pick a single item's metadata
+                            row,
+                            item_uid: item.item_uid,
+                            index: item_idx,
+                        };
+                        cx.add_highlighted_item_loc(item_loc);
+                        ui.painter().rect(
+                            item_rect,
+                            0.0,
+                            item.color,
+                            Stroke::new(2.0, Color32::WHITE),
+                        );
                     } else {
                         ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                     }
+                } else if cx.highlighted_items.contains_key(&self.entry_id) {
+                    let index = cx.highlighted_items[&self.entry_id]
+                        .iter()
+                        .position(|r| r.row == row && r.index == item_idx);
+                    if index.is_some() {
+                        ui.painter().rect(
+                            item_rect,
+                            0.0,
+                            item.color,
+                            Stroke::new(2.0, Color32::WHITE),
+                        );
+                    } else {
+                        ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
+                    }
+                } else {
+                    ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                 }
             }
         }
@@ -1210,7 +1208,7 @@ impl eframe::App for ProfApp {
                         cx.search = "".to_string();
                         cx.highlighted_items.clear();
                     }
-                    return ui.text_edit_singleline(&mut cx.search);
+                    ui.text_edit_singleline(&mut cx.search)
                 });
                 if reply.inner.changed() || cx.zoomed < 2 {
                     // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
@@ -1222,7 +1220,7 @@ impl eframe::App for ProfApp {
                     cx.highlighted_items.clear();
                     cx.selected_node = None;
 
-                    if cx.search.len() > 0 {
+                    if !cx.search.is_empty() {
                         // initialize an AhoCorasick state machine
                         let lowercase_search = cx.search.to_lowercase();
                         let patterns: Vec<&str> = lowercase_search.split(' ').collect();
@@ -1250,7 +1248,8 @@ impl eframe::App for ProfApp {
                                                         let item_loc = ItemLoc {
                                                             entry_id: slot.entry_id.clone(),
                                                             tile_id: tile.tile_id,
-                                                            row: row,
+                                                            item_uid: j.item_uid,
+                                                            row,
                                                             index: idx,
                                                             meta: j.clone(),
                                                         };
@@ -1284,7 +1283,7 @@ impl eframe::App for ProfApp {
 
                                 let top_level_filter = get_filtered_entries(&top_level, 0, i);
                                 let middle_level = get_entries_with_level(&top_level_filter, 1);
-                                if middle_level.len() == 0 || middle_level[0].len() == 0 {
+                                if middle_level.is_empty() || middle_level[0].is_empty() {
                                     continue;
                                 }
                                 ui.collapsing(nodes.long_name.to_string(), |ui| {
@@ -1294,7 +1293,7 @@ impl eframe::App for ProfApp {
                                         let bottom_level =
                                             get_entries_with_level(&middle_level_filter, 2);
 
-                                        if bottom_level.len() == 0 || bottom_level[0].len() == 0 {
+                                        if bottom_level.is_empty() || bottom_level[0].is_empty() {
                                             continue;
                                         }
                                         ui.collapsing(channels.long_name.to_string(), |ui| {
@@ -1304,7 +1303,7 @@ impl eframe::App for ProfApp {
                                                 ui.collapsing(slot.long_name.to_string(), |ui| {
                                                     for key in bottom_level_filter {
                                                         for item in
-                                                            cx.highlighted_items[&key].iter()
+                                                            cx.highlighted_items[key].iter()
                                                         {
                                                             if ui
                                                                 .small_button(
@@ -1491,15 +1490,15 @@ fn get_filtered_entries<'a>(
 ) -> Vec<&'a EntryID> {
     let index = level_entries
         .iter()
-        .position(|x| x.len() > 0 && x[0].slot_index(slot_index).unwrap() == i as u64);
+        .position(|x| !x.is_empty() && x[0].slot_index(slot_index).unwrap() == i as u64);
 
-    let level_filter = if let Some(index) = index {
+    
+
+    if let Some(index) = index {
         level_entries[index].clone()
     } else {
         Vec::new()
-    };
-
-    return level_filter;
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
