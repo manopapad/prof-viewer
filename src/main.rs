@@ -2,7 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use egui::{Color32, NumExt};
-use legion_prof_viewer::http::client::HTTPDataSource;
 use rand::Rng;
 use std::collections::BTreeMap;
 
@@ -14,8 +13,7 @@ use legion_prof_viewer::timestamp::{Interval, Timestamp};
 
 fn main() {
     legion_prof_viewer::app::start(
-        Box::new(HTTPDataSource::new("127.0.0.1".to_string(), 8080)),
-        // Box::<RandomDataSource>::default(),
+        Box::<RandomDataSource>::default(),
         Some(Box::<RandomDataSource>::default()),
     );
 }

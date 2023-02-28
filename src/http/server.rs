@@ -10,6 +10,9 @@ use serde::{Deserialize, Serialize};
 
 use std::sync::{Arc, Mutex};
 
+// dyn DataSource + Sync + Send + 'static> from
+// https://stackoverflow.com/questions/65645622/how-do-i-pass-a-trait-as-application-data-to-actix-web
+// to enable passing a datasource between threads
 pub struct AppState {
     pub data_source: Mutex<Box<dyn DataSource + Sync + Send + 'static>>,
 }
@@ -32,14 +35,11 @@ pub struct FetchTilesRequest {
 }
 
 impl DataSourceHTTPServer {
-    // new function
-
     pub fn new(
         port: u16,
         host: String,
         state: Box<dyn DataSource + Sync + Send + 'static>,
     ) -> Self {
-        // let state = Data::from(Arc::new(data));
         Self {
             port,
             host,
@@ -129,14 +129,7 @@ impl DataSourceHTTPServer {
     }
 
     #[actix_web::main]
-    pub async fn create_server(
-        self,
-        // data: impl DataSource + Send + Sync + 'static,
-    ) -> std::io::Result<()> {
-        // let app_state = AppState {
-        //     data_source: Mutex::new(Box::new(data)),
-        // };
-
+    pub async fn create_server(self) -> std::io::Result<()> {
         let state = Data::from(Arc::new(self.state));
         std::env::set_var("RUST_LOG", "debug");
         env_logger::init();

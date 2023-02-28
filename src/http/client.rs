@@ -33,18 +33,14 @@ impl DataSource for HTTPDataSource {
             .client
             .get(format!("http://{}:{}/interval", self.host, self.port))
             .send();
-        let res = resp.unwrap().json::<Interval>().unwrap();
-        // println!("{:#?}", res);
-        res
+        resp.unwrap().json::<Interval>().unwrap()
     }
     fn fetch_info(&mut self) -> EntryInfo {
         let resp = self
             .client
             .get(format!("http://{}:{}/info", self.host, self.port))
             .send();
-        let res = resp.unwrap().json::<EntryInfo>().unwrap();
-        // println!("{:#?}", res);
-        res
+        resp.unwrap().json::<EntryInfo>().unwrap()
     }
     fn request_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) -> Vec<TileID> {
         let resp = self
@@ -55,9 +51,7 @@ impl DataSource for HTTPDataSource {
                 interval: request_interval,
             })
             .send();
-        let res = resp.unwrap().json::<Vec<TileID>>().unwrap();
-        // println!("{:#?}", res);
-        res
+        resp.unwrap().json::<Vec<TileID>>().unwrap()
     }
     fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SummaryTile {
         let resp = self
@@ -68,9 +62,7 @@ impl DataSource for HTTPDataSource {
                 tile_id: tile_id.clone(),
             })
             .send();
-        let res = resp.unwrap().json::<SummaryTile>().unwrap();
-        // println!("{:#?}", res);
-        res
+        resp.unwrap().json::<SummaryTile>().unwrap()
     }
     fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotTile {
         let resp = self
@@ -81,9 +73,7 @@ impl DataSource for HTTPDataSource {
                 tile_id: tile_id.clone(),
             })
             .send();
-        let res = resp.unwrap().json::<SlotTile>().unwrap();
-        // println!("{:#?}", res);
-        res
+        resp.unwrap().json::<SlotTile>().unwrap()
     }
     fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotMetaTile {
         let resp = self
@@ -94,8 +84,6 @@ impl DataSource for HTTPDataSource {
                 tile_id: tile_id.clone(),
             })
             .send();
-        let res = resp.unwrap().json::<SlotMetaTile>().unwrap();
-        // println!("{:#?}", res);
-        res
+        resp.unwrap().json::<SlotMetaTile>().unwrap()
     }
 }
