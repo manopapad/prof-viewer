@@ -21,6 +21,9 @@ rand = { version = "0.8" }
 # transitive depedency, required for rand to support wasm
 getrandom = { version = "0.2", features = ["js"] }
 aho-corasick = "0.7.20"
+actix-web = "4"
+reqwest = { version = "0.11", features = ["blocking", "json", "gzip", "brotli"] }
+env_logger = "0.10.0"
 
 
 # native:

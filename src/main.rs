@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use egui::{Color32, NumExt};
+use legion_prof_viewer::http::client::HTTPDataSource;
 use rand::Rng;
 use std::collections::BTreeMap;
 
@@ -13,7 +14,8 @@ use legion_prof_viewer::timestamp::{Interval, Timestamp};
 
 fn main() {
     legion_prof_viewer::app::start(
-        Box::<RandomDataSource>::default(),
+        Box::new(HTTPDataSource::new("127.0.0.1".to_string(), 8080)),
+        // Box::<RandomDataSource>::default(),
         Some(Box::<RandomDataSource>::default()),
     );
 }
@@ -94,7 +96,8 @@ impl RandomDataSource {
 
     fn generate_slot(&mut self, entry_id: &EntryID) -> &SlotCacheTile {
         if !self.slot_cache.contains_key(entry_id) {
-            let entry = self.fetch_info().get(entry_id);
+            let entry_info = self.fetch_info();
+            let entry = entry_info.get(entry_id);
 
             let max_rows = if let EntryInfo::Slot { max_rows, .. } = entry.unwrap() {
                 max_rows
@@ -165,9 +168,9 @@ impl DataSource for RandomDataSource {
         interval
     }
 
-    fn fetch_info(&mut self) -> &EntryInfo {
+    fn fetch_info(&mut self) -> EntryInfo {
         if let Some(ref info) = self.info {
-            return info;
+            return info.clone();
         }
 
         let kinds = vec![
@@ -221,7 +224,7 @@ impl DataSource for RandomDataSource {
             summary: None,
             slots: node_slots,
         });
-        self.info.as_ref().unwrap()
+        self.info.as_ref().unwrap().clone()
     }
 
     fn request_tiles(&mut self, _entry_id: &EntryID, request_interval: Interval) -> Vec<TileID> {

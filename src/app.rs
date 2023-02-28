@@ -877,7 +877,7 @@ impl Window {
         let mut config = Config::new(data_source);
 
         Self {
-            panel: Panel::new(config.data_source.fetch_info(), EntryID::root()),
+            panel: Panel::new(&config.data_source.fetch_info(), EntryID::root()),
             index,
             kinds: config.data_source.fetch_info().kinds(),
             config,

@@ -88,7 +88,7 @@ pub struct SlotMetaTile {
 
 pub trait DataSource {
     fn interval(&mut self) -> Interval;
-    fn fetch_info(&mut self) -> &EntryInfo;
+    fn fetch_info(&mut self) -> EntryInfo;
     fn request_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) -> Vec<TileID>;
     fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SummaryTile;
     fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotTile;
