@@ -133,7 +133,6 @@ impl RandomDataSource {
                     row_item_metas.push(ItemMeta {
                         item_uid,
                         title: "Test Item".to_owned(),
-                        item_uid,
                         fields: vec![
                             (
                                 "Interval".to_owned(),

@@ -1040,9 +1040,9 @@ impl ProfApp {
             cx.drag_origin = response.interact_pointer_pos();
         }
 
-        if let Some(origin) = cx.drag_origin {
+        if let (Some(origin), Some(current)) = (cx.drag_origin, response.interact_pointer_pos()) {
             // We're in a drag, calculate the drag inetrval
-            let current = response.interact_pointer_pos().unwrap();
+
             let min = origin.x.min(current.x);
             let max = origin.x.max(current.x);
 
