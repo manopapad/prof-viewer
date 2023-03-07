@@ -1,17 +1,17 @@
 use aho_corasick::AhoCorasick;
-use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
+use egui::{
+    Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Ui, Vec2,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field, ItemMeta, ItemUID, SlotMetaTile, SlotTile, TileID,
-    UtilPoint,
+    DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
+use crate::search::{SelectedItem, SelectedState};
 use crate::timestamp::Interval;
-
-use std::collections::HashSet;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -44,6 +44,7 @@ use std::collections::HashSet;
 ///   * Viewer widget for items
 
 const MAX_SELECTED_ITEMS: u64 = 1000;
+const MAX_SEARCHED_ITEMS: u64 = 1000;
 
 struct Summary {
     entry_id: EntryID,
@@ -120,48 +121,11 @@ struct Context {
     zoom_state: ZoomState,
 
     #[serde(skip)]
-    search: String,
+    selected_state: SelectedState,
 
-    #[serde(skip)]
-    num_matches: u64,
-
-    #[serde(skip)]
-    highlighted_items: BTreeMap<EntryID, Vec<ItemLoc>>,
-
-    entries_highlighted: HashSet<EntryID>,
-
-    #[serde(skip)]
-    selected_node: Option<ItemLoc>,
+    toggle_dark_mode: bool,
 
     debug: bool,
-}
-
-impl Context {
-    fn add_highlighted_item_loc(&mut self, item_loc: ItemLoc) {
-        let entry_id = item_loc.entry_id.clone();
-        let item_locs = self.highlighted_items.entry(entry_id.clone()).or_default();
-        item_locs.push(item_loc);
-        let mut entry = EntryID::root();
-
-        let mut i = 0;
-        while i < entry_id.level() {
-            if let Some(depth) = entry_id.slot_index(i) {
-                entry = entry.child(depth);
-                self.entries_highlighted.insert(entry.clone());
-            }
-            i += 1;
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-struct ItemLoc {
-    entry_id: EntryID,
-    tile_id: TileID,
-    item_uid: ItemUID,
-    meta: ItemMeta,
-    row: usize,
-    index: usize,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -444,7 +408,7 @@ impl Slot {
         let tile = &self.tiles[tile_index];
         let tile_id = tile.tile_id;
 
-        if !cx.view_interval.overlaps(tile_id.0) && cx.selected_node.is_none() {
+        if !cx.view_interval.overlaps(tile_id.0) && cx.selected_state.selected.is_none() {
             return hover_pos;
         }
 
@@ -464,9 +428,11 @@ impl Slot {
 
             // Cull if out of bounds
             // Note: need to shift by rect.min to get to viewport space
-            if row_max.y - rect.min.y < viewport.min.y && cx.selected_node.is_none() {
+            if row_max.y - rect.min.y < viewport.min.y && cx.selected_state.selected.is_none() {
                 break;
-            } else if row_min.y - rect.min.y > viewport.max.y && cx.selected_node.is_none() {
+            } else if row_min.y - rect.min.y > viewport.max.y
+                && cx.selected_state.selected.is_none()
+            {
                 continue;
             }
 
@@ -490,21 +456,25 @@ impl Slot {
 
                 let item_rect = Rect::from_min_max(min, max);
 
-                if cx.selected_node.is_some()
-                    && cx.selected_node.as_ref().unwrap().item_uid == item.item_uid
+                if cx.selected_state.selected.is_some()
+                    && cx.selected_state.selected.as_ref().unwrap().item_uid == item.item_uid
                 {
                     ui.scroll_to_rect(item_rect, Some(egui::Align::Center));
                     // set interval
                     ProfApp::zoom(cx, item.interval);
-                    cx.selected_node = None;
+                    cx.selected_state.selected = None;
                 }
 
                 if row_hover && hover_pos.map_or(false, |h| item_rect.contains(h)) {
                     hover_pos = None;
                     interact_item = Some((row, item_idx, item_rect, tile_id));
 
-                    let index = if cx.highlighted_items.contains_key(&self.entry_id) {
-                        cx.highlighted_items[&self.entry_id]
+                    let index = if cx
+                        .selected_state
+                        .highlighted_items
+                        .contains_key(&self.entry_id)
+                    {
+                        cx.selected_state.highlighted_items[&self.entry_id]
                             .iter()
                             .position(|r| r.item_uid == item.item_uid)
                     } else {
@@ -513,7 +483,8 @@ impl Slot {
                     if index.is_some() {
                         if clicked {
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
-                            cx.highlighted_items
+                            cx.selected_state
+                                .highlighted_items
                                 .get_mut(&self.entry_id)
                                 .unwrap()
                                 .remove(index.unwrap());
@@ -526,7 +497,7 @@ impl Slot {
                             );
                         }
                     } else if clicked {
-                        let item_loc = ItemLoc {
+                        let selected_item = SelectedItem {
                             entry_id: self.entry_id.clone(),
                             tile_id,
                             meta: config
@@ -538,7 +509,7 @@ impl Slot {
                             item_uid: item.item_uid,
                             index: item_idx,
                         };
-                        cx.add_highlighted_item_loc(item_loc);
+                        cx.selected_state.add_highlighted_item(selected_item);
                         ui.painter().rect(
                             item_rect,
                             0.0,
@@ -548,8 +519,12 @@ impl Slot {
                     } else {
                         ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                     }
-                } else if cx.highlighted_items.contains_key(&self.entry_id) {
-                    let index = cx.highlighted_items[&self.entry_id]
+                } else if cx
+                    .selected_state
+                    .highlighted_items
+                    .contains_key(&self.entry_id)
+                {
+                    let index = cx.selected_state.highlighted_items[&self.entry_id]
                         .iter()
                         .position(|r| r.item_uid == item.item_uid);
                     if index.is_some() {
@@ -650,7 +625,8 @@ impl Entry for Slot {
 
         let mut hover_pos = response.hover_pos(); // where is the mouse hovering?
 
-        if cx.selected_node.is_some() && cx.selected_node.clone().unwrap().entry_id == self.entry_id
+        if cx.selected_state.selected.is_some()
+            && cx.selected_state.selected.clone().unwrap().entry_id == self.entry_id
         {
             self.expanded = true
         }
@@ -715,9 +691,9 @@ impl<S: Entry> Panel<S> {
 
         // Cull if out of bounds
         // Note: need to shift by rect.min to get to viewport space
-        if max_y - rect.min.y < viewport.min.y && cx.selected_node.is_none() {
+        if max_y - rect.min.y < viewport.min.y && cx.selected_state.selected.is_none() {
             return false;
-        } else if min_y - rect.min.y > viewport.max.y && cx.selected_node.is_none() {
+        } else if min_y - rect.min.y > viewport.max.y && cx.selected_state.selected.is_none() {
             return true;
         }
 
@@ -804,7 +780,8 @@ impl<S: Entry> Entry for Panel<S> {
             Self::render(ui, rect, viewport, summary, &mut y, config, cx);
         }
 
-        if cx.selected_node.is_some() && cx.selected_node.clone().unwrap().entry_id == self.entry_id
+        if cx.selected_state.selected.is_some()
+            && cx.selected_state.selected.clone().unwrap().entry_id == self.entry_id
         {
             self.expanded = true
         }
@@ -988,6 +965,13 @@ impl ProfApp {
         {
             result.last_update = Some(Instant::now());
         }
+
+        let theme = if result.cx.toggle_dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        cc.egui_ctx.set_visuals(theme);
 
         result
     }
@@ -1191,18 +1175,6 @@ impl eframe::App for ProfApp {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
-            let visual = if cx.viewing_mode {
-                egui::Visuals::light()
-            } else {
-                egui::Visuals::dark()
-            };
-
-            // swap to dark mode
-            if let Some(toggled) = visual.light_dark_small_toggle_button(ui) {
-                ctx.set_visuals(toggled);
-                cx.viewing_mode = !cx.viewing_mode;
-            }
-
             if ui.button("Reset Zoom Level").clicked() || ctx.input().key_pressed(egui::Key::Escape)
             {
                 ProfApp::zoom(cx, cx.total_interval);
@@ -1217,36 +1189,26 @@ impl eframe::App for ProfApp {
                 let row_height = ui.text_style_height(&text_style);
 
                 ui.separator();
+
                 ui.subheading("Search: ", cx);
 
                 let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                    if ui.button("X").clicked() {
-                        cx.search = "".to_string();
-                        cx.highlighted_items.clear();
-                        cx.entries_highlighted.clear();
+                    if ui.button("✖").clicked() {
+                        cx.selected_state.clear_search()
                     }
-                    ui.text_edit_singleline(&mut cx.search)
+                    ui.text_edit_singleline(&mut cx.selected_state.search)
                 });
 
                 if reply.inner.changed() || cx.zoom_state.zoom_count < 2 {
                     // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
                     if cx.zoom_state.zoom_count < 2 {
-                        cx.highlighted_items.clear();
-                        cx.entries_highlighted.clear();
-                        cx.selected_node = None;
                         cx.zoom_state.zoom_count += 1;
                     }
-                    cx.highlighted_items.clear();
-                    cx.entries_highlighted.clear();
-                    cx.selected_node = None;
-                    cx.num_matches = 0;
+                    cx.selected_state.clear_highlighted_items();
 
-                    if !cx.search.is_empty() {
+                    if !cx.selected_state.search.is_empty() {
                         // initialize an AhoCorasick state machine
-                        let lowercase_search = cx.search.to_lowercase();
-                        let patterns: Vec<&str> =
-                            lowercase_search.split(' ').filter(|x| x != &"").collect();
-                        let ac = AhoCorasick::new(patterns);
+                       let searcher = cx.selected_state.build_search_automaton();
                         // traverse panel tree
                         for window in windows.iter_mut() {
                             let config = &mut window.config;
@@ -1266,7 +1228,7 @@ impl eframe::App for ProfApp {
                                                     let potential_match =
                                                         ac.find(j.title.as_str().to_lowercase());
                                                     if potential_match.is_some() {
-                                                        let item_loc = ItemLoc {
+                                                        let selected_item = SelectedItem {
                                                             entry_id: slot.entry_id.clone(),
                                                             tile_id: tile.tile_id,
                                                             item_uid: j.item_uid,
@@ -1275,8 +1237,9 @@ impl eframe::App for ProfApp {
                                                             meta: j.clone(),
                                                         };
 
-                                                        cx.add_highlighted_item_loc(item_loc);
-                                                        cx.num_matches += 1;
+                                                        cx.selected_state
+                                                            .add_highlighted_item(selected_item);
+                                                        cx.selected_state.num_matches += 1;
                                                     }
                                                 }
                                             }
@@ -1287,13 +1250,17 @@ impl eframe::App for ProfApp {
                         }
                     }
                 }
-                if !cx.search.is_empty() {
-                    let exceeded_max = cx.num_matches > MAX_SELECTED_ITEMS;
+                if !cx.selected_state.search.is_empty() {
+                    let exceeded_max = cx.selected_state.num_matches > MAX_SELECTED_ITEMS;
                     let asterisk = if exceeded_max { "*" } else { "" };
-                    let es = if cx.num_matches == 1 { "" } else { "es" };
+                    let es = if cx.selected_state.num_matches == 1 {
+                        ""
+                    } else {
+                        "es"
+                    };
                     ui.label(format!(
                         "Found {matches} match{es}{asterisk}",
-                        matches = cx.num_matches
+                        matches = cx.selected_state.num_matches
                     ));
                     if exceeded_max {
                         ui.label(format!(
@@ -1307,18 +1274,20 @@ impl eframe::App for ProfApp {
                 ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
                     ui,
                     row_height,
-                    cx.highlighted_items.len(),
+                    cx.selected_state.highlighted_items.len(),
                     |ui, _row_range| {
                         let mut count = 0;
                         for window in windows.iter_mut() {
-                            let top_level =
-                                get_entries_with_level(&cx.highlighted_items.keys().collect(), 0);
+                            let top_level = get_entries_with_level(
+                                &cx.selected_state.highlighted_items.keys().collect(),
+                                0,
+                            );
                             for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
                                 // grab top_level entries of i entry_id
 
                                 let top_entry = EntryID::root().child(i as u64);
 
-                                if !cx.entries_highlighted.contains(&top_entry) {
+                                if !cx.selected_state.entries_highlighted.contains(&top_entry) {
                                     continue;
                                 }
                                 let top_level_filter = get_filtered_entries(&top_level, 0, i);
@@ -1329,7 +1298,11 @@ impl eframe::App for ProfApp {
                                 ui.collapsing(nodes.long_name.to_string(), |ui| {
                                     for (j, channels) in nodes.slots.iter_mut().enumerate() {
                                         let middle_entry = top_entry.child(j as u64);
-                                        if !cx.entries_highlighted.contains(&middle_entry) {
+                                        if !cx
+                                            .selected_state
+                                            .entries_highlighted
+                                            .contains(&middle_entry)
+                                        {
                                             continue;
                                         }
                                         let middle_level_filter =
@@ -1343,7 +1316,11 @@ impl eframe::App for ProfApp {
                                         ui.collapsing(channels.long_name.to_string(), |ui| {
                                             for (k, slot) in channels.slots.iter_mut().enumerate() {
                                                 let bottom_entry = middle_entry.child(k as u64);
-                                                if !cx.entries_highlighted.contains(&bottom_entry) {
+                                                if !cx
+                                                    .selected_state
+                                                    .entries_highlighted
+                                                    .contains(&bottom_entry)
+                                                {
                                                     continue;
                                                 }
                                                 let bottom_level_filter =
@@ -1356,7 +1333,9 @@ impl eframe::App for ProfApp {
                                                 }
                                                 ui.collapsing(slot.long_name.to_string(), |ui| {
                                                     for key in bottom_level_filter {
-                                                        for item in cx.highlighted_items[key].iter()
+                                                        for item in
+                                                            cx.selected_state.highlighted_items[key]
+                                                                .iter()
                                                         {
                                                             if count > 1000 {
                                                                 break;
@@ -1372,7 +1351,7 @@ impl eframe::App for ProfApp {
                                                                 )
                                                                 .clicked()
                                                             {
-                                                                cx.selected_node =
+                                                                cx.selected_state.selected =
                                                                     Some(item.clone());
                                                                 nodes.expanded = true;
                                                                 channels.expanded = true;
@@ -1395,11 +1374,6 @@ impl eframe::App for ProfApp {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-
-                    let button = egui::Button::new(egui::RichText::new("🛠")).frame(false);
-                    if ui.add(button).on_hover_text("Toggle debug mode").clicked() {
-                        cx.debug = !cx.debug;
-                    }
                     ui.label("powered by ");
                     ui.hyperlink_to("egui", "https://github.com/emilk/egui");
                     ui.label(" and ");
@@ -1408,6 +1382,41 @@ impl eframe::App for ProfApp {
                         "https://github.com/emilk/egui/tree/master/crates/eframe",
                     );
                     ui.label(".");
+                });
+
+                ui.horizontal(|ui| {
+                    // swap to dark mode
+                    let mut current_theme = if cx.toggle_dark_mode {
+                        egui::Visuals::dark()
+                    } else {
+                        egui::Visuals::light()
+                    };
+
+                    current_theme.light_dark_radio_buttons(ui);
+                    if current_theme.dark_mode != cx.toggle_dark_mode {
+                        cx.toggle_dark_mode = current_theme.dark_mode;
+                        ctx.set_visuals(current_theme);
+                    }
+
+                    let debug_color = if cx.debug {
+                        ui.visuals().hyperlink_color
+                    } else {
+                        ui.visuals().text_color()
+                    };
+
+                    let button =
+                        egui::Button::new(egui::RichText::new("🛠").color(debug_color).size(16.0))
+                            .frame(false);
+                    if ui
+                        .add(button)
+                        .on_hover_text(format!(
+                            "Toggle debug mode {}",
+                            if cx.debug { "off" } else { "on" }
+                        ))
+                        .clicked()
+                    {
+                        cx.debug = !cx.debug;
+                    }
                 });
 
                 egui::warn_if_debug_build(ui);
