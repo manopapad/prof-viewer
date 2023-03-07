@@ -2,9 +2,7 @@ use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use egui::{
-    Align2, Color32, NumExt, Pos2, Rect, ScrollArea, Slider, Stroke, TextStyle, Vec2,
-};
+use egui::{Align2, Color32, NumExt, Pos2, Rect, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
 
 use crate::data::{
@@ -1051,7 +1049,6 @@ impl eframe::App for ProfApp {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-
                     ui.label("powered by ");
                     ui.hyperlink_to("egui", "https://github.com/emilk/egui");
                     ui.label(" and ");
@@ -1076,8 +1073,23 @@ impl eframe::App for ProfApp {
                         ctx.set_visuals(current_theme);
                     }
 
-                    let button = egui::Button::new(egui::RichText::new("🛠")).frame(false);
-                    if ui.add(button).on_hover_text("Toggle debug mode").clicked() {
+                    let debug_color = if cx.debug {
+                        ui.visuals().hyperlink_color
+                    } else {
+                        ui.visuals().text_color()
+                    };
+
+                    let button =
+                        egui::Button::new(egui::RichText::new("🛠").color(debug_color).size(16.0))
+                            .frame(false);
+                    if ui
+                        .add(button)
+                        .on_hover_text(format!(
+                            "Toggle debug mode {}",
+                            if cx.debug { "off" } else { "on" }
+                        ))
+                        .clicked()
+                    {
                         cx.debug = !cx.debug;
                     }
                 });
