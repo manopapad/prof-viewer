@@ -125,11 +125,12 @@ impl RandomDataSource {
 
                     let item_uid = self.item_uid_generator.next();
                     row_items.push(Item {
-                        interval: Interval::new(start, stop),
                         item_uid,
+                        interval: Interval::new(start, stop),
                         color,
                     });
                     row_item_metas.push(ItemMeta {
+                        item_uid,
                         title: "Test Item".to_owned(),
                         item_uid,
                         fields: vec![
