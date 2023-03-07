@@ -1044,9 +1044,7 @@ impl eframe::App for ProfApp {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
 
-                    let button = egui::Button::new(
-                        egui::RichText::new("🛠"))
-                    .frame(false);
+                    let button = egui::Button::new(egui::RichText::new("🛠")).frame(false);
                     if ui.add(button).on_hover_text("Toggle debug mode").clicked() {
                         cx.debug = !cx.debug;
                     }
