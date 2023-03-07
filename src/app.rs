@@ -87,6 +87,13 @@ struct Window {
 }
 
 #[derive(Default, Deserialize, Serialize)]
+struct ZoomState {
+    levels: Vec<Interval>,
+    index: usize,
+    zoom_count: u32, // factor out
+}
+
+#[derive(Default, Deserialize, Serialize)]
 struct Context {
     row_height: f32,
 
@@ -104,6 +111,8 @@ struct Context {
     // data gets drawn. This gets used rendering the cursor, but we
     // only know it when we render slots. So stash it here.
     slot_rect: Option<Rect>,
+
+    zoom_state: ZoomState,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -840,7 +849,10 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
-        result.cx.view_interval = result.cx.total_interval;
+        
+        
+        Self::zoom(&mut result.cx, window.config.interval);
+
 
         result.extra_source = extra_source;
 
@@ -851,6 +863,32 @@ impl ProfApp {
 
         result
     }
+
+    fn zoom(cx: &mut Context, interval: Interval) {
+        cx.view_interval = interval;
+        cx.zoom_state.levels.push(cx.view_interval);
+        cx.zoom_state.index = cx.zoom_state.levels.len() - 1;
+        cx.zoom_state.zoom_count = 0;
+    }
+
+    fn undo_zoom(cx: &mut Context) {
+        if cx.zoom_state.index == 0 {
+            return;
+        }
+        cx.zoom_state.index -= 1;
+        cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
+        cx.zoom_state.zoom_count = 0;
+    }
+
+    fn redo_zoom(cx: &mut Context) {
+        if cx.zoom_state.index == cx.zoom_state.levels.len() - 1 {
+            return;
+        }
+        cx.zoom_state.index += 1;
+        cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
+        cx.zoom_state.zoom_count = 0;
+    }
+
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
         // Hack: the UI rect we have at this point is not where the
@@ -900,7 +938,7 @@ impl ProfApp {
                 // Only set view interval if the drag was a certain amount
                 const MIN_DRAG_DISTANCE: f32 = 4.0;
                 if max - min > MIN_DRAG_DISTANCE {
-                    cx.view_interval = interval;
+                    ProfApp::zoom(cx, interval)
                 }
 
                 cx.drag_origin = None;
@@ -1025,11 +1063,11 @@ impl eframe::App for ProfApp {
                 windows.push(Window::new(extra, index));
                 let window = windows.last_mut().unwrap();
                 cx.total_interval = cx.total_interval.union(window.config.interval);
-                cx.view_interval = cx.total_interval;
+                ProfApp::zoom(cx, cx.total_interval);
             }
 
             if ui.button("Reset Zoom Level").clicked() {
-                cx.view_interval = cx.total_interval;
+                ProfApp::zoom(cx, cx.total_interval);
             }
 
             egui::Frame::group(ui.style()).show(ui, |ui| {
@@ -1089,6 +1127,14 @@ impl eframe::App for ProfApp {
 
             Self::cursor(ui, cx);
         });
+
+        if ctx.memory().focus().is_none()  {
+            if ctx.input().key_pressed(egui::Key::ArrowLeft) {
+                ProfApp::undo_zoom(cx);
+            } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
+                ProfApp::redo_zoom(cx);
+            }
+        }
     }
 }
 
