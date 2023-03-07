@@ -92,6 +92,13 @@ struct Window {
 }
 
 #[derive(Default, Deserialize, Serialize)]
+struct ZoomState {
+    levels: Vec<Interval>,
+    index: usize,
+    zoom_count: u32, // factor out
+}
+
+#[derive(Default, Deserialize, Serialize)]
 struct Context {
     row_height: f32,
 
@@ -110,13 +117,7 @@ struct Context {
     // only know it when we render slots. So stash it here.
     slot_rect: Option<Rect>,
 
-    zoom_levels: Vec<Interval>,
-
-    zoom_index: usize,
-
-    zoomed: u32,
-
-    viewing_mode: bool,
+    zoom_state: ZoomState,
 
     #[serde(skip)]
     search: String,
@@ -980,11 +981,8 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
-        result.cx.viewing_mode = true; // set to default to light mode
-
-        Self::zoom(&mut result.cx, window.config.interval);
-
         result.extra_source = extra_source;
+        Self::zoom(&mut result.cx, window.config.interval);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -996,27 +994,27 @@ impl ProfApp {
 
     fn zoom(cx: &mut Context, interval: Interval) {
         cx.view_interval = interval;
-        cx.zoom_levels.push(cx.view_interval);
-        cx.zoom_index = cx.zoom_levels.len() - 1;
-        cx.zoomed = 0;
+        cx.zoom_state.levels.push(cx.view_interval);
+        cx.zoom_state.index = cx.zoom_state.levels.len() - 1;
+        cx.zoom_state.zoom_count = 0;
     }
 
     fn undo_zoom(cx: &mut Context) {
-        if cx.zoom_index == 0 {
+        if cx.zoom_state.index == 0 {
             return;
         }
-        cx.zoom_index -= 1;
-        cx.view_interval = cx.zoom_levels[cx.zoom_index];
-        cx.zoomed = 0;
+        cx.zoom_state.index -= 1;
+        cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
+        cx.zoom_state.zoom_count = 0;
     }
 
     fn redo_zoom(cx: &mut Context) {
-        if cx.zoom_index == cx.zoom_levels.len() - 1 {
+        if cx.zoom_state.index == cx.zoom_state.levels.len() - 1 {
             return;
         }
-        cx.zoom_index += 1;
-        cx.view_interval = cx.zoom_levels[cx.zoom_index];
-        cx.zoomed = 0;
+        cx.zoom_state.index += 1;
+        cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
+        cx.zoom_state.zoom_count = 0;
     }
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
@@ -1067,7 +1065,7 @@ impl ProfApp {
                 // Only set view interval if the drag was a certain amount
                 const MIN_DRAG_DISTANCE: f32 = 4.0;
                 if max - min > MIN_DRAG_DISTANCE {
-                    ProfApp::zoom(cx, interval)
+                    ProfApp::zoom(cx, interval);
                 }
 
                 cx.drag_origin = None;
@@ -1230,13 +1228,13 @@ impl eframe::App for ProfApp {
                     ui.text_edit_singleline(&mut cx.search)
                 });
 
-                if reply.inner.changed() || cx.zoomed < 2 {
+                if reply.inner.changed() || cx.zoom_state.zoom_count < 2 {
                     // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
-                    if cx.zoomed < 2 {
+                    if cx.zoom_state.zoom_count < 2 {
                         cx.highlighted_items.clear();
                         cx.entries_highlighted.clear();
                         cx.selected_node = None;
-                        cx.zoomed += 1;
+                        cx.zoom_state.zoom_count += 1;
                     }
                     cx.highlighted_items.clear();
                     cx.entries_highlighted.clear();
@@ -1451,10 +1449,12 @@ impl eframe::App for ProfApp {
             Self::cursor(ui, cx);
         });
 
-        if ctx.input().key_pressed(egui::Key::ArrowLeft) && ctx.memory().focus().is_none() {
-            ProfApp::undo_zoom(cx);
-        } else if ctx.input().key_pressed(egui::Key::ArrowRight) && ctx.memory().focus().is_none() {
-            ProfApp::redo_zoom(cx);
+        if ctx.memory().focus().is_none() {
+            if ctx.input().key_pressed(egui::Key::ArrowLeft) {
+                ProfApp::undo_zoom(cx);
+            } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
+                ProfApp::redo_zoom(cx);
+            }
         }
     }
 }
