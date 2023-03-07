@@ -2,7 +2,9 @@ use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use egui::{Align2, Color32, NumExt, Pos2, Rect, ScrollArea, Slider, Stroke, TextStyle, Vec2};
+use egui::{
+    Align2, Color32, NumExt, Pos2, Rect, ScrollArea, Slider, Stroke, TextStyle, Vec2,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::data::{
@@ -105,7 +107,9 @@ struct Context {
     // only know it when we render slots. So stash it here.
     slot_rect: Option<Rect>,
 
-    dark_theme_toggle: bool,
+    toggle_dark_mode: bool,
+
+    debug: bool,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -828,8 +832,6 @@ impl ProfApp {
         // This is also where you can customized the look at feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
-
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
         let mut result: Self = if let Some(storage) = cc.storage {
@@ -842,15 +844,20 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
-        result.cx.dark_theme_toggle = false; // set to default to light mode
         result.cx.view_interval = result.cx.total_interval;
-
         result.extra_source = extra_source;
 
         #[cfg(not(target_arch = "wasm32"))]
         {
             result.last_update = Some(Instant::now());
         }
+
+        let theme = if result.cx.toggle_dark_mode {
+            egui::Visuals::dark()
+        } else {
+            egui::Visuals::light()
+        };
+        cc.egui_ctx.set_visuals(theme);
 
         result
     }
@@ -1031,20 +1038,6 @@ impl eframe::App for ProfApp {
                 cx.view_interval = cx.total_interval;
             }
 
-            let mut visual = if cx.dark_theme_toggle {
-                egui::Visuals::dark()
-            } else {
-                egui::Visuals::light()
-
-            };
-
-            // swap to dark mode
-            visual.light_dark_radio_buttons(ui);
-            if let Some(toggled) = visual.light_dark_small_toggle_button(ui) {
-                ctx.set_visuals(toggled);
-                cx.dark_theme_toggle = !cx.dark_theme_toggle;
-            }
-
             if ui.button("Reset Zoom Level").clicked() {
                 cx.view_interval = cx.total_interval;
             }
@@ -1058,6 +1051,7 @@ impl eframe::App for ProfApp {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
+
                     ui.label("powered by ");
                     ui.hyperlink_to("egui", "https://github.com/emilk/egui");
                     ui.label(" and ");
@@ -1066,6 +1060,26 @@ impl eframe::App for ProfApp {
                         "https://github.com/emilk/egui/tree/master/crates/eframe",
                     );
                     ui.label(".");
+                });
+
+                ui.horizontal(|ui| {
+                    // swap to dark mode
+                    let mut current_theme = if cx.toggle_dark_mode {
+                        egui::Visuals::dark()
+                    } else {
+                        egui::Visuals::light()
+                    };
+
+                    current_theme.light_dark_radio_buttons(ui);
+                    if current_theme.dark_mode != cx.toggle_dark_mode {
+                        cx.toggle_dark_mode = current_theme.dark_mode;
+                        ctx.set_visuals(current_theme);
+                    }
+
+                    let button = egui::Button::new(egui::RichText::new("🛠")).frame(false);
+                    if ui.add(button).on_hover_text("Toggle debug mode").clicked() {
+                        cx.debug = !cx.debug;
+                    }
                 });
 
                 egui::warn_if_debug_build(ui);
