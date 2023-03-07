@@ -1123,7 +1123,7 @@ impl eframe::App for ProfApp {
             Self::cursor(ui, cx);
         });
 
-        if ctx.memory().focus().is_none()  {
+        if ctx.memory().focus().is_none() {
             if ctx.input().key_pressed(egui::Key::ArrowLeft) {
                 ProfApp::undo_zoom(cx);
             } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
