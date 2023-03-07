@@ -104,6 +104,8 @@ struct Context {
     // data gets drawn. This gets used rendering the cursor, but we
     // only know it when we render slots. So stash it here.
     slot_rect: Option<Rect>,
+
+    dark_theme_toggle: bool,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -840,6 +842,7 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
+        result.cx.dark_theme_toggle = false; // set to default to light mode
         result.cx.view_interval = result.cx.total_interval;
 
         result.extra_source = extra_source;
@@ -1026,6 +1029,20 @@ impl eframe::App for ProfApp {
                 let window = windows.last_mut().unwrap();
                 cx.total_interval = cx.total_interval.union(window.config.interval);
                 cx.view_interval = cx.total_interval;
+            }
+
+            let mut visual = if cx.dark_theme_toggle {
+                egui::Visuals::dark()
+            } else {
+                egui::Visuals::light()
+
+            };
+
+            // swap to dark mode
+            visual.light_dark_radio_buttons(ui);
+            if let Some(toggled) = visual.light_dark_small_toggle_button(ui) {
+                ctx.set_visuals(toggled);
+                cx.dark_theme_toggle = !cx.dark_theme_toggle;
             }
 
             if ui.button("Reset Zoom Level").clicked() {
