@@ -1,12 +1,13 @@
-use crate::timestamp::{Interval, Timestamp};
 pub use egui::{Color32, Rgba};
 use serde::{Deserialize, Serialize};
-use std::{collections::BTreeSet, fmt::Display, fmt::Formatter};
+use std::collections::BTreeSet;
+
+use crate::timestamp::{Interval, Timestamp};
 
 // We encode EntryID as i64 because it allows us to pack Summary into the
 // value -1. Users shouldn't need to know about this and interact through the
 // methods below, or via EntryIndex.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct EntryID(Vec<i64>);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -39,7 +40,7 @@ pub struct UtilPoint {
     pub util: f32,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum Field {
     I64(i64),
     U64(u64),
@@ -58,11 +59,17 @@ pub struct Item {
     pub color: Color32,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ItemMeta {
     pub item_uid: ItemUID,
     pub title: String,
     pub fields: Vec<(String, Field)>,
+}
+
+impl PartialEq for ItemMeta {
+    fn eq(&self, other: &Self) -> bool {
+        self.item_uid == other.item_uid
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -88,7 +95,7 @@ pub struct SlotMetaTile {
 
 pub trait DataSource {
     fn interval(&mut self) -> Interval;
-    fn fetch_info(&mut self) -> &EntryInfo;
+    fn fetch_info(&mut self) -> EntryInfo;
     fn request_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) -> Vec<TileID>;
     fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SummaryTile;
     fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotTile;
@@ -194,11 +201,5 @@ impl EntryInfo {
             return result;
         }
         unreachable!()
-    }
-}
-
-impl Display for ItemUID {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
     }
 }

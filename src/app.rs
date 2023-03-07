@@ -1,6 +1,6 @@
-use aho_corasick::AhoCorasick;
 use egui::{
-    Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Ui, Vec2,
+    Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextEdit, TextStyle, Vec2,
+    Widget,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -44,7 +44,7 @@ use crate::timestamp::Interval;
 ///   * Viewer widget for items
 
 const MAX_SELECTED_ITEMS: u64 = 1000;
-const MAX_SEARCHED_ITEMS: u64 = 1000;
+const MAX_SEARCHED_ITEMS: u64 = 100000;
 
 struct Summary {
     entry_id: EntryID,
@@ -548,7 +548,9 @@ impl Slot {
             let item_meta = &tile_meta.items[row][item_idx];
             ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
                 ui.label(&item_meta.title);
-                ui.label(format!("Item UID: {}", item_meta.item_uid));
+                if cx.debug {
+                    ui.label(format!("Item UID: {}", item_meta.item_uid.0));
+                }
                 for (name, field) in &item_meta.fields {
                     match field {
                         Field::I64(value) => {
@@ -857,7 +859,7 @@ impl Window {
         let mut config = Config::new(data_source);
 
         Self {
-            panel: Panel::new(config.data_source.fetch_info(), EntryID::root()),
+            panel: Panel::new(&config.data_source.fetch_info(), EntryID::root()),
             index,
             kinds: config.data_source.fetch_info().kinds(),
             config,
@@ -1192,7 +1194,7 @@ impl eframe::App for ProfApp {
 
                 ui.subheading("Search: ", cx);
 
-                let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::LEFT), |ui| {
                     if ui.button("✖").clicked() {
                         cx.selected_state.clear_search()
                     }
@@ -1204,13 +1206,12 @@ impl eframe::App for ProfApp {
                     if cx.zoom_state.zoom_count < 2 {
                         cx.zoom_state.zoom_count += 1;
                     }
+                    let mut searched = 0;
                     cx.selected_state.clear_highlighted_items();
 
                     if !cx.selected_state.search.is_empty() {
-                        // initialize an AhoCorasick state machine
-                       let searcher = cx.selected_state.build_search_automaton();
                         // traverse panel tree
-                        for window in windows.iter_mut() {
+                        'outer: for window in windows.iter_mut() {
                             let config = &mut window.config;
                             for node in window.panel.slots.iter_mut() {
                                 for channel in node.slots.iter_mut() {
@@ -1225,9 +1226,7 @@ impl eframe::App for ProfApp {
                                                 .fetch_slot_meta_tile(&slot.entry_id, tile.tile_id);
                                             for (row, i) in meta.items.iter().enumerate() {
                                                 for (idx, j) in i.iter().enumerate() {
-                                                    let potential_match =
-                                                        ac.find(j.title.as_str().to_lowercase());
-                                                    if potential_match.is_some() {
+                                                    if cx.selected_state.search(&j.title) {
                                                         let selected_item = SelectedItem {
                                                             entry_id: slot.entry_id.clone(),
                                                             tile_id: tile.tile_id,
@@ -1241,6 +1240,10 @@ impl eframe::App for ProfApp {
                                                             .add_highlighted_item(selected_item);
                                                         cx.selected_state.num_matches += 1;
                                                     }
+                                                    searched += 1;
+                                                    if searched >= MAX_SEARCHED_ITEMS {
+                                                        break 'outer;
+                                                    }
                                                 }
                                             }
                                         }
@@ -1251,7 +1254,7 @@ impl eframe::App for ProfApp {
                     }
                 }
                 if !cx.selected_state.search.is_empty() {
-                    let exceeded_max = cx.selected_state.num_matches > MAX_SELECTED_ITEMS;
+                    let exceeded_max = cx.selected_state.num_matches >= MAX_SELECTED_ITEMS;
                     let asterisk = if exceeded_max { "*" } else { "" };
                     let es = if cx.selected_state.num_matches == 1 {
                         ""
@@ -1271,107 +1274,123 @@ impl eframe::App for ProfApp {
 
                 ui.separator();
 
-                ScrollArea::vertical().auto_shrink([false; 2]).show_rows(
-                    ui,
-                    row_height,
-                    cx.selected_state.highlighted_items.len(),
-                    |ui, _row_range| {
-                        let mut count = 0;
-                        for window in windows.iter_mut() {
-                            let top_level = get_entries_with_level(
-                                &cx.selected_state.highlighted_items.keys().collect(),
-                                0,
-                            );
-                            for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
-                                // grab top_level entries of i entry_id
+                ScrollArea::vertical()
+                    .max_height(ui.available_height() - 60.0)
+                    .auto_shrink([false; 2])
+                    .show_rows(
+                        ui,
+                        row_height,
+                        cx.selected_state.highlighted_items.len(),
+                        |ui, _row_range| {
+                            let mut count = 0;
+                            for window in windows.iter_mut() {
+                                let top_level = get_entries_with_level(
+                                    &cx.selected_state.highlighted_items.keys().collect(),
+                                    0,
+                                );
+                                for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
+                                    // grab top_level entries of i entry_id
 
-                                let top_entry = EntryID::root().child(i as u64);
+                                    let top_entry = EntryID::root().child(i as u64);
 
-                                if !cx.selected_state.entries_highlighted.contains(&top_entry) {
-                                    continue;
-                                }
-                                let top_level_filter = get_filtered_entries(&top_level, 0, i);
-                                let middle_level = get_entries_with_level(&top_level_filter, 1);
-                                if middle_level.is_empty() || middle_level[0].is_empty() {
-                                    continue;
-                                }
-                                ui.collapsing(nodes.long_name.to_string(), |ui| {
-                                    for (j, channels) in nodes.slots.iter_mut().enumerate() {
-                                        let middle_entry = top_entry.child(j as u64);
-                                        if !cx
-                                            .selected_state
-                                            .entries_highlighted
-                                            .contains(&middle_entry)
-                                        {
-                                            continue;
-                                        }
-                                        let middle_level_filter =
-                                            get_filtered_entries(&middle_level, 1, j);
-                                        let bottom_level =
-                                            get_entries_with_level(&middle_level_filter, 2);
-
-                                        if bottom_level.is_empty() || bottom_level[0].is_empty() {
-                                            continue;
-                                        }
-                                        ui.collapsing(channels.long_name.to_string(), |ui| {
-                                            for (k, slot) in channels.slots.iter_mut().enumerate() {
-                                                let bottom_entry = middle_entry.child(k as u64);
-                                                if !cx
-                                                    .selected_state
-                                                    .entries_highlighted
-                                                    .contains(&bottom_entry)
-                                                {
-                                                    continue;
-                                                }
-                                                let bottom_level_filter =
-                                                    get_filtered_entries(&bottom_level, 2, k);
-
-                                                if bottom_level_filter.is_empty()
-                                                    || bottom_level[0].is_empty()
-                                                {
-                                                    continue;
-                                                }
-                                                ui.collapsing(slot.long_name.to_string(), |ui| {
-                                                    for key in bottom_level_filter {
-                                                        for item in
-                                                            cx.selected_state.highlighted_items[key]
-                                                                .iter()
-                                                        {
-                                                            if count > 1000 {
-                                                                break;
-                                                            }
-                                                            if ui
-                                                                .small_button(
-                                                                    RichText::new(
-                                                                        item.meta.title.clone(),
-                                                                    )
-                                                                    .color(Color32::from_rgb(
-                                                                        128, 140, 255,
-                                                                    )),
-                                                                )
-                                                                .clicked()
-                                                            {
-                                                                cx.selected_state.selected =
-                                                                    Some(item.clone());
-                                                                nodes.expanded = true;
-                                                                channels.expanded = true;
-                                                                slot.expanded = true;
-                                                                count += 1;
-                                                            }
-                                                        }
-                                                    }
-                                                });
-                                            }
-                                        });
+                                    if !cx.selected_state.entries_highlighted.contains(&top_entry) {
+                                        continue;
                                     }
-                                });
-                            }
-                        }
-                    },
-                );
-            });
+                                    let top_level_filter = get_filtered_entries(&top_level, 0, i);
+                                    let middle_level = get_entries_with_level(&top_level_filter, 1);
+                                    if middle_level.is_empty() || middle_level[0].is_empty() {
+                                        continue;
+                                    }
+                                    ui.collapsing(nodes.long_name.to_string(), |ui| {
+                                        for (j, channels) in nodes.slots.iter_mut().enumerate() {
+                                            let middle_entry = top_entry.child(j as u64);
+                                            if !cx
+                                                .selected_state
+                                                .entries_highlighted
+                                                .contains(&middle_entry)
+                                            {
+                                                continue;
+                                            }
+                                            let middle_level_filter =
+                                                get_filtered_entries(&middle_level, 1, j);
+                                            let bottom_level =
+                                                get_entries_with_level(&middle_level_filter, 2);
 
+                                            if bottom_level.is_empty() || bottom_level[0].is_empty()
+                                            {
+                                                continue;
+                                            }
+                                            ui.collapsing(channels.long_name.to_string(), |ui| {
+                                                for (k, slot) in
+                                                    channels.slots.iter_mut().enumerate()
+                                                {
+                                                    let bottom_entry = middle_entry.child(k as u64);
+                                                    if !cx
+                                                        .selected_state
+                                                        .entries_highlighted
+                                                        .contains(&bottom_entry)
+                                                    {
+                                                        continue;
+                                                    }
+                                                    let bottom_level_filter =
+                                                        get_filtered_entries(&bottom_level, 2, k);
+
+                                                    if bottom_level_filter.is_empty()
+                                                        || bottom_level[0].is_empty()
+                                                    {
+                                                        continue;
+                                                    }
+                                                    ui.collapsing(
+                                                        slot.long_name.to_string(),
+                                                        |ui| {
+                                                            'outer: for key in bottom_level_filter {
+                                                                for item in cx
+                                                                    .selected_state
+                                                                    .highlighted_items[key]
+                                                                    .iter()
+                                                                {
+                                                                    if count > MAX_SELECTED_ITEMS {
+                                                                        break 'outer;
+                                                                    }
+                                                                    if ui
+                                                                        .small_button(
+                                                                            RichText::new(
+                                                                                item.meta
+                                                                                    .title
+                                                                                    .clone(),
+                                                                            )
+                                                                            .color(
+                                                                                Color32::from_rgb(
+                                                                                    128, 140, 255,
+                                                                                ),
+                                                                            ),
+                                                                        )
+                                                                        .clicked()
+                                                                    {
+                                                                        cx.selected_state
+                                                                            .selected =
+                                                                            Some(item.clone());
+                                                                        nodes.expanded = true;
+                                                                        channels.expanded = true;
+                                                                        slot.expanded = true;
+                                                                        count += 1;
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                            }
+                        },
+                    );
+            });
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
+                // println!("{}", ui.height());
+                ui.set_height(60.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
                     ui.label("powered by ");
@@ -1423,7 +1442,7 @@ impl eframe::App for ProfApp {
 
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    ui.separator();
+                    // ui.separator();
                     ui.label(format!("FPS: {_fps:.0}"));
                 }
             });
