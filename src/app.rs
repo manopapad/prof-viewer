@@ -849,12 +849,8 @@ impl ProfApp {
         result.windows.push(Window::new(data_source, 0));
         let window = result.windows.last().unwrap();
         result.cx.total_interval = window.config.interval;
-        
-        
-        Self::zoom(&mut result.cx, window.config.interval);
-
-
         result.extra_source = extra_source;
+        Self::zoom(&mut result.cx, window.config.interval);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -888,7 +884,6 @@ impl ProfApp {
         cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
         cx.zoom_state.zoom_count = 0;
     }
-
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
         // Hack: the UI rect we have at this point is not where the
@@ -938,7 +933,7 @@ impl ProfApp {
                 // Only set view interval if the drag was a certain amount
                 const MIN_DRAG_DISTANCE: f32 = 4.0;
                 if max - min > MIN_DRAG_DISTANCE {
-                    ProfApp::zoom(cx, interval)
+                    ProfApp::zoom(cx, interval);
                 }
 
                 cx.drag_origin = None;
