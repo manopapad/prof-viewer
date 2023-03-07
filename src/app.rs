@@ -104,6 +104,8 @@ struct Context {
     // data gets drawn. This gets used rendering the cursor, but we
     // only know it when we render slots. So stash it here.
     slot_rect: Option<Rect>,
+
+    debug: bool,
 }
 
 #[derive(Default, Deserialize, Serialize)]
