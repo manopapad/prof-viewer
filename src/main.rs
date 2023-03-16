@@ -94,8 +94,8 @@ impl RandomDataSource {
 
     fn generate_slot(&mut self, entry_id: &EntryID) -> &SlotCacheTile {
         if !self.slot_cache.contains_key(entry_id) {
-            let entry = self.fetch_info();
-            let entry = entry.get(entry_id);
+            let entry_info = self.fetch_info();
+            let entry = entry_info.get(entry_id);
 
             let max_rows = if let EntryInfo::Slot { max_rows, .. } = entry.unwrap() {
                 max_rows
