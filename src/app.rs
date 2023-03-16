@@ -622,8 +622,12 @@ impl Entry for Slot {
 
         let response = ui.allocate_rect(rect, egui::Sense::hover());
 
-        let clicked = ui.input().pointer.any_click()
-            && rect.contains(ui.input().pointer.interact_pos().unwrap());
+        let mut clicked = false;
+
+        ui.input(|i| {
+            let pointer = &i.pointer;
+            clicked = pointer.any_click() && rect.contains(pointer.interact_pos().unwrap());
+        });
 
         let mut hover_pos = response.hover_pos(); // where is the mouse hovering?
 
@@ -979,7 +983,12 @@ impl ProfApp {
     }
 
     fn zoom(cx: &mut Context, interval: Interval) {
+        if cx.view_interval == interval {
+            return;
+        }
+
         cx.view_interval = interval;
+        cx.zoom_state.levels.truncate(cx.zoom_state.index + 1);
         cx.zoom_state.levels.push(cx.view_interval);
         cx.zoom_state.index = cx.zoom_state.levels.len() - 1;
         cx.zoom_state.zoom_count = 0;
@@ -1001,6 +1010,41 @@ impl ProfApp {
         cx.zoom_state.index += 1;
         cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
         cx.zoom_state.zoom_count = 0;
+    }
+
+    fn keyboard(ctx: &egui::Context, cx: &mut Context) {
+        // Focus is elsewhere, don't check any keys
+        if ctx.memory(|m| m.focus().is_some()) {
+            return;
+        }
+
+        enum Actions {
+            UndoZoom,
+            RedoZoom,
+            ResetZoom,
+            NoAction,
+        }
+        let action = ctx.input(|i| {
+            if i.modifiers.ctrl {
+                if i.key_pressed(egui::Key::ArrowLeft) {
+                    Actions::UndoZoom
+                } else if i.key_pressed(egui::Key::ArrowRight) {
+                    Actions::RedoZoom
+                } else if i.key_pressed(egui::Key::Num0) {
+                    Actions::ResetZoom
+                } else {
+                    Actions::NoAction
+                }
+            } else {
+                Actions::NoAction
+            }
+        });
+        match action {
+            Actions::UndoZoom => ProfApp::undo_zoom(cx),
+            Actions::RedoZoom => ProfApp::redo_zoom(cx),
+            Actions::ResetZoom => ProfApp::zoom(cx, cx.total_interval),
+            Actions::NoAction => {}
+        }
     }
 
     fn cursor(ui: &mut egui::Ui, cx: &mut Context) {
@@ -1177,8 +1221,7 @@ impl eframe::App for ProfApp {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
-            if ui.button("Reset Zoom Level").clicked() || ctx.input().key_pressed(egui::Key::Escape)
-            {
+            if ui.button("Reset Zoom Level").clicked() {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
@@ -1452,7 +1495,7 @@ impl eframe::App for ProfApp {
             // Use body font to figure out how tall to draw rectangles.
 
             let font_id = TextStyle::Body.resolve(ui.style());
-            let row_height = ui.fonts().row_height(&font_id);
+            let row_height = ui.fonts(|f| f.row_height(&font_id));
             // Just set this on every frame for now
             cx.row_height = row_height;
 
@@ -1477,13 +1520,7 @@ impl eframe::App for ProfApp {
             Self::cursor(ui, cx);
         });
 
-        if ctx.memory().focus().is_none() {
-            if ctx.input().key_pressed(egui::Key::ArrowLeft) {
-                ProfApp::undo_zoom(cx);
-            } else if ctx.input().key_pressed(egui::Key::ArrowRight) {
-                ProfApp::redo_zoom(cx);
-            }
-        }
+        Self::keyboard(ctx, cx);
     }
 }
 
@@ -1601,7 +1638,8 @@ pub fn start(data_source: Box<dyn DataSource>, extra_source: Option<Box<dyn Data
         "Legion Prof",
         native_options,
         Box::new(|cc| Box::new(ProfApp::new(cc, data_source, extra_source))),
-    );
+    )
+    .expect("failed to start eframe");
 }
 
 #[cfg(target_arch = "wasm32")]
