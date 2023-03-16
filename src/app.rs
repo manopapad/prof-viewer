@@ -1,7 +1,4 @@
-use egui::{
-    Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextEdit, TextStyle, Vec2,
-    Widget,
-};
+use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
@@ -11,7 +8,7 @@ use crate::data::{
     DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
 use crate::search::{SelectedItem, SelectedState};
-use crate::timestamp::Interval;
+use crate::timestamp::{Interval, Timestamp};
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -110,6 +107,10 @@ struct Context {
 
     // Visible time range
     view_interval: Interval,
+
+    view_interval_start_buffer: String,
+
+    view_interval_stop_buffer: String,
 
     drag_origin: Option<Pos2>,
 
@@ -871,7 +872,10 @@ impl Window {
     }
 
     fn content(&mut self, ui: &mut egui::Ui, cx: &mut Context) {
-        ui.heading(format!("Profile {}", self.index));
+        ui.horizontal(|ui| {
+            ui.heading(format!("Profile {}", self.index));
+            ui.label(cx.view_interval.to_string())
+        });
 
         ScrollArea::vertical()
             .auto_shrink([false; 2])
@@ -932,13 +936,101 @@ impl Window {
         });
     }
 
-    fn controls(&mut self, ui: &mut egui::Ui, cx: &Context) {
+    fn modify_interval(&mut self, ui: &mut egui::Ui, cx: &mut Context) {
+        ui.subheading("Interval", cx);
+        let start_res = ui
+            .horizontal(|ui| {
+                ui.label("Start:");
+                ui.text_edit_singleline(&mut cx.view_interval_start_buffer)
+            })
+            .inner;
+
+        let stop_res = ui
+            .horizontal(|ui| {
+                ui.label("Stop:");
+                ui.text_edit_singleline(&mut cx.view_interval_stop_buffer)
+            })
+            .inner;
+
+        if start_res.lost_focus()
+            && cx.view_interval_start_buffer != cx.view_interval.start.to_string()
+        {
+            match Interval::convert_str_to_timestamp(&cx.view_interval_start_buffer) {
+                Ok(start) => {
+                    // validate timestamp
+                    if start > cx.view_interval.stop {
+                        cx.view_interval_start_buffer = "Start must be before stop".to_string();
+                        return;
+                    }
+                    if start < Timestamp(0) {
+                        cx.view_interval_start_buffer = "Start must be positive".to_string();
+                        return;
+                    }
+                    if start > cx.total_interval.stop {
+                        cx.view_interval_start_buffer =
+                            "Start must be before end of trace".to_string();
+                        return;
+                    }
+                    cx.view_interval.start = start;
+                    ProfApp::zoom(cx, cx.view_interval);
+                }
+                Err(e) => {
+                    if e.to_string() == "no value" {
+                        cx.view_interval_start_buffer = cx.view_interval.start.to_string();
+                        return;
+                    }
+                    cx.view_interval_start_buffer = e.to_string();
+                }
+            }
+        }
+        if stop_res.lost_focus()
+            && cx.view_interval_stop_buffer != cx.view_interval.stop.to_string()
+        {
+            match Interval::convert_str_to_timestamp(&cx.view_interval_stop_buffer) {
+                Ok(stop) => {
+                    // validate timestamp
+                    if stop < cx.view_interval.start {
+                        cx.view_interval_stop_buffer = "Stop must be after start".to_string();
+                        return;
+                    }
+                    if stop < Timestamp(0) {
+                        cx.view_interval_stop_buffer = "Stop must be positive".to_string();
+                        return;
+                    }
+                    if stop > cx.total_interval.stop {
+                        cx.view_interval_stop_buffer =
+                            "Stop must be before end of trace".to_string();
+                        return;
+                    }
+
+                    cx.view_interval.stop = stop;
+
+                    ProfApp::zoom(cx, cx.view_interval);
+                }
+                Err(e) => {
+                    if e.to_string() == "no value" {
+                        cx.view_interval_stop_buffer = cx.view_interval.stop.to_string();
+                        return;
+                    }
+                    cx.view_interval_stop_buffer = e.to_string();
+                }
+            }
+        }
+    }
+
+    fn controls(&mut self, ui: &mut egui::Ui, cx: &mut Context) {
         const WIDGET_PADDING: f32 = 8.0;
         ui.heading(format!("Profile {}: Controls", self.index));
         ui.add_space(WIDGET_PADDING);
         self.node_selection(ui, cx);
         ui.add_space(WIDGET_PADDING);
         self.expand_collapse(ui, cx);
+        ui.add_space(WIDGET_PADDING);
+        self.modify_interval(ui, cx);
+        ui.add_space(WIDGET_PADDING);
+        if ui.button("Reset Zoom Level").clicked() {
+            ProfApp::zoom(cx, cx.total_interval);
+        }
     }
 }
 
@@ -988,6 +1080,8 @@ impl ProfApp {
         }
 
         cx.view_interval = interval;
+        cx.view_interval_start_buffer = cx.view_interval.start.to_string();
+        cx.view_interval_stop_buffer = cx.view_interval.stop.to_string();
         cx.zoom_state.levels.truncate(cx.zoom_state.index + 1);
         cx.zoom_state.levels.push(cx.view_interval);
         cx.zoom_state.index = cx.zoom_state.levels.len() - 1;
@@ -1000,6 +1094,8 @@ impl ProfApp {
         }
         cx.zoom_state.index -= 1;
         cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
+        cx.view_interval_start_buffer = cx.view_interval.start.to_string();
+        cx.view_interval_stop_buffer = cx.view_interval.stop.to_string();
         cx.zoom_state.zoom_count = 0;
     }
 
@@ -1009,6 +1105,8 @@ impl ProfApp {
         }
         cx.zoom_state.index += 1;
         cx.view_interval = cx.zoom_state.levels[cx.zoom_state.index];
+        cx.view_interval_start_buffer = cx.view_interval.start.to_string();
+        cx.view_interval_stop_buffer = cx.view_interval.stop.to_string();
         cx.zoom_state.zoom_count = 0;
     }
 
@@ -1017,7 +1115,6 @@ impl ProfApp {
         if ctx.memory(|m| m.focus().is_some()) {
             return;
         }
-
         enum Actions {
             UndoZoom,
             RedoZoom,
@@ -1025,16 +1122,12 @@ impl ProfApp {
             NoAction,
         }
         let action = ctx.input(|i| {
-            if i.modifiers.ctrl {
-                if i.key_pressed(egui::Key::ArrowLeft) {
-                    Actions::UndoZoom
-                } else if i.key_pressed(egui::Key::ArrowRight) {
-                    Actions::RedoZoom
-                } else if i.key_pressed(egui::Key::Num0) {
-                    Actions::ResetZoom
-                } else {
-                    Actions::NoAction
-                }
+            if i.key_pressed(egui::Key::ArrowLeft) {
+                Actions::UndoZoom
+            } else if i.key_pressed(egui::Key::ArrowRight) {
+                Actions::RedoZoom
+            } else if i.modifiers.ctrl && i.key_pressed(egui::Key::Num0) {
+                Actions::ResetZoom
             } else {
                 Actions::NoAction
             }
@@ -1218,10 +1311,6 @@ impl eframe::App for ProfApp {
                 windows.push(Window::new(extra, index));
                 let window = windows.last_mut().unwrap();
                 cx.total_interval = cx.total_interval.union(window.config.interval);
-                ProfApp::zoom(cx, cx.total_interval);
-            }
-
-            if ui.button("Reset Zoom Level").clicked() {
                 ProfApp::zoom(cx, cx.total_interval);
             }
 
@@ -1410,6 +1499,14 @@ impl eframe::App for ProfApp {
                                                                         )
                                                                         .clicked()
                                                                     {
+                                                                        egui::Window::new(
+                                                                            "My Window",
+                                                                        )
+                                                                        .show(ctx, |ui| {
+                                                                            ui.label(
+                                                                                "Hello World!",
+                                                                            );
+                                                                        });
                                                                         cx.selected_state
                                                                             .selected =
                                                                             Some(item.clone());

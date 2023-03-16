@@ -124,4 +124,24 @@ impl Interval {
     pub fn lerp(self, value: f32) -> Timestamp {
         Timestamp((value * (self.duration_ns() as f32)).round() as i64 + self.start.0)
     }
+    
+    // convert a string like "500.0 s" to a timestamp
+    pub fn convert_str_to_timestamp(s: &str) -> Result<Timestamp, String> {
+        let mut parts = s.split_whitespace();
+        let value = parts.next().ok_or("no value")?;
+        let value = value.parse::<f32>().map_err(|_| "invalid value")?;
+        let unit = parts.next().ok_or("no unit")?;
+        let unit = unit.to_lowercase();
+        let ns_per_us = 1_000;
+        let ns_per_ms = 1_000_000;
+        let ns_per_s = 1_000_000_000;
+        let ns = match unit.as_str() {
+            "ns" => value as i64,
+            "us" => (value * ns_per_us as f32) as i64,
+            "ms" => (value * ns_per_ms as f32) as i64,
+            "s" => (value * ns_per_s as f32) as i64,
+            _ => return Err(format!("invalid unit: {}", unit)),
+        };
+        Ok(Timestamp(ns))
+    }
 }

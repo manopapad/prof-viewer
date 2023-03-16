@@ -51,13 +51,10 @@ impl DataSourceHTTPServer {
     async fn get_entry_name(data: web::Data<AppState>) -> impl Responder {
         let mutex = &data.data_source;
         let mut source = mutex.lock().unwrap();
-        let mut e = String::new();
-        match source.fetch_info() {
-            EntryInfo::Panel { short_name, .. } => {
-                e = short_name.clone();
-            }
-            _ => e = "hello".to_string(),
-        }
+        let e = match source.fetch_info() {
+            EntryInfo::Panel { short_name, .. } => short_name.clone(),
+            _ => "hello".to_string(),
+        };
 
         HttpResponse::Ok().body(e)
     }
