@@ -5,6 +5,11 @@ authors = ["Elliott Slaughter <slaughter@cs.stanford.edu>"]
 edition = "2021"
 rust-version = "1.65"
 
+[features]
+default = []
+client = []
+server = []
+
 
 [dependencies]
 egui = "0.20.0"
