@@ -8,7 +8,7 @@ use crate::data::{
     DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
 use crate::search::{SelectedItem, SelectedState};
-use crate::timestamp::{Interval, Timestamp};
+use crate::timestamp::Interval;
 
 /// Overview:
 ///   ProfApp -> Context, Window *
@@ -962,10 +962,6 @@ impl Window {
                         cx.view_interval_start_buffer = "Start must be before stop".to_string();
                         return;
                     }
-                    if start < Timestamp(0) {
-                        cx.view_interval_start_buffer = "Start must be positive".to_string();
-                        return;
-                    }
                     if start > cx.total_interval.stop {
                         cx.view_interval_start_buffer =
                             "Start must be before end of trace".to_string();
@@ -991,15 +987,6 @@ impl Window {
                     // validate timestamp
                     if stop < cx.view_interval.start {
                         cx.view_interval_stop_buffer = "Stop must be after start".to_string();
-                        return;
-                    }
-                    if stop < Timestamp(0) {
-                        cx.view_interval_stop_buffer = "Stop must be positive".to_string();
-                        return;
-                    }
-                    if stop > cx.total_interval.stop {
-                        cx.view_interval_stop_buffer =
-                            "Stop must be before end of trace".to_string();
                         return;
                     }
 
