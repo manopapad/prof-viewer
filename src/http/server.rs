@@ -1,14 +1,14 @@
-use crate::data::{DataSource, EntryID, EntryInfo, TileID};
-use crate::timestamp::Interval;
+use crate::data::{DataSource, EntryInfo};
 
 use actix_web::{
     middleware,
     web::{self, Data},
     App, HttpResponse, HttpServer, Responder, Result,
 };
-use serde::{Deserialize, Serialize};
 
 use std::sync::{Arc, Mutex};
+
+use super::schema::{FetchRequest, FetchTilesRequest};
 
 // dyn DataSource + Sync + Send + 'static> from
 // https://stackoverflow.com/questions/65645622/how-do-i-pass-a-trait-as-application-data-to-actix-web
@@ -21,17 +21,6 @@ pub struct DataSourceHTTPServer {
     pub port: u16,
     pub host: String,
     pub state: AppState,
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FetchRequest {
-    pub entry_id: EntryID,
-    pub tile_id: TileID,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FetchTilesRequest {
-    pub entry_id: EntryID,
-    pub interval: Interval,
 }
 
 impl DataSourceHTTPServer {
