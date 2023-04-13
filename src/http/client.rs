@@ -1,10 +1,9 @@
 use crate::{
     data::{DataSource, EntryID, EntryInfo, SlotMetaTile, SlotTile, SummaryTile, TileID},
-    http::server::FetchRequest,
     timestamp::Interval,
 };
 
-use super::server::FetchTilesRequest;
+use super::schema::{FetchRequest, FetchTilesRequest};
 
 pub struct HTTPDataSource {
     pub host: String,
@@ -59,7 +58,7 @@ impl DataSource for HTTPDataSource {
             .get(format!("http://{}:{}/summary_tile", self.host, self.port))
             .json(&FetchRequest {
                 entry_id: entry_id.clone(),
-                tile_id: tile_id.clone(),
+                tile_id,
             })
             .send();
         resp.unwrap().json::<SummaryTile>().unwrap()
@@ -70,7 +69,7 @@ impl DataSource for HTTPDataSource {
             .get(format!("http://{}:{}/slot_tile", self.host, self.port))
             .json(&FetchRequest {
                 entry_id: entry_id.clone(),
-                tile_id: tile_id.clone(),
+                tile_id,
             })
             .send();
         resp.unwrap().json::<SlotTile>().unwrap()
@@ -81,7 +80,7 @@ impl DataSource for HTTPDataSource {
             .get(format!("http://{}:{}/slot_meta_tile", self.host, self.port))
             .json(&FetchRequest {
                 entry_id: entry_id.clone(),
-                tile_id: tile_id.clone(),
+                tile_id,
             })
             .send();
         resp.unwrap().json::<SlotMetaTile>().unwrap()
