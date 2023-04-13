@@ -5,18 +5,11 @@ use egui::{Color32, NumExt};
 use rand::Rng;
 use std::collections::BTreeMap;
 
-use legion_prof_viewer::data::{
+use crate::data::{
     DataSource, EntryID, EntryInfo, Field, Item, ItemMeta, ItemUID, SlotMetaTile, SlotTile,
     SummaryTile, TileID, UtilPoint,
 };
-use legion_prof_viewer::timestamp::{Interval, Timestamp};
-
-fn main() {
-    legion_prof_viewer::app::start(
-        Box::<RandomDataSource>::default(),
-        Some(Box::<RandomDataSource>::default()),
-    );
-}
+use crate::timestamp::{Interval, Timestamp};
 
 type SlotCacheTile = (Vec<Vec<Item>>, Vec<Vec<ItemMeta>>);
 
