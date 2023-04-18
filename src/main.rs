@@ -2,20 +2,32 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
 use egui::{Color32, NumExt};
+use legion_prof_viewer::data::{
+    DataSource, EntryID, EntryInfo, Field, Item, ItemMeta, ItemUID, SlotMetaTile, SlotTile,
+    SummaryTile, TileID, UtilPoint, Initializer,
+};
+use legion_prof_viewer::http::queueclient::HTTPQueueDataSource;
+use legion_prof_viewer::logging::*;
+use legion_prof_viewer::timestamp::{Interval, Timestamp};
 use rand::Rng;
 use std::collections::BTreeMap;
 
-use legion_prof_viewer::data::{
-    DataSource, EntryID, EntryInfo, Field, Item, ItemMeta, ItemUID, SlotMetaTile, SlotTile,
-    SummaryTile, TileID, UtilPoint,
-};
-use legion_prof_viewer::timestamp::{Interval, Timestamp};
-
 fn main() {
-    legion_prof_viewer::app::start(
-        Box::<RandomDataSource>::default(),
-        Some(Box::<RandomDataSource>::default()),
-    );
+    let f_info = r#"{"entry_info":{"Panel":{"short_name":"root","long_name":"root","summary":null,"slots":[{"Panel":{"short_name":"n0","long_name":"Node 0","summary":null,"slots":[{"Panel":{"short_name":"cpu","long_name":"Node 0 CPU","summary":{"Summary":{"color":[70,130,180,255]}},"slots":[{"Slot":{"short_name":"c1","long_name":"Node 0 CPU 1","max_rows":3}},{"Slot":{"short_name":"c2","long_name":"Node 0 CPU 2","max_rows":2}},{"Slot":{"short_name":"c3","long_name":"Node 0 CPU 3","max_rows":2}},{"Slot":{"short_name":"c4","long_name":"Node 0 CPU 4","max_rows":2}}]}},{"Panel":{"short_name":"utility","long_name":"Node 0 Utility","summary":{"Summary":{"color":[220,20,60,255]}},"slots":[{"Slot":{"short_name":"u0","long_name":"Node 0 Utility 0","max_rows":5}}]}},{"Panel":{"short_name":"system","long_name":"Node 0 System","summary":{"Summary":{"color":[107,142,35,255]}},"slots":[{"Slot":{"short_name":"s0","long_name":"Node 0 System 0","max_rows":34}}]}},{"Panel":{"short_name":"file","long_name":"Node 0 File","summary":{"Summary":{"color":[255,69,0,255]}},"slots":[{"Slot":{"short_name":"f2","long_name":"Node 0 File 2","max_rows":50}}]}},{"Panel":{"short_name":"chan","long_name":"Node 0 Channel","summary":{"Summary":{"color":[255,69,0,255]}},"slots":[{"Slot":{"short_name":"f n0s","long_name":"Fill Node 0 System 0","max_rows":6}},{"Slot":{"short_name":"g n0s","long_name":"Gather to Node 0 System 0","max_rows":4}},{"Slot":{"short_name":"n0s-n0s","long_name":"Node 0 System 0 to Node 0 System 0","max_rows":7}},{"Slot":{"short_name":"n0s-n0f","long_name":"Node 0 System 0 to Node 0 File 2","max_rows":41}}]}}]}}]}},"interval":{"start":0,"stop":18269727459}}"#;
+
+    log("start");
+    // convert f_info into EntryInfo
+    let init: Initializer = serde_json::from_str(f_info).unwrap();
+    let queue = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    // create queue
+    let ds = HTTPQueueDataSource::new("127.0.0.1".to_string(), 8000, queue, init);
+    let boxed_ds = Box::new(ds);
+    legion_prof_viewer::app::start(boxed_ds, None);
+
+    // legion_prof_viewer::app::start(
+    //     Box::<RandomDataSource>::default(),
+    //     Some(Box::<RandomDataSource>::default()),
+    // );
 }
 
 type SlotCacheTile = (Vec<Vec<Item>>, Vec<Vec<ItemMeta>>);
@@ -38,293 +50,293 @@ impl ItemUIDGenerator {
     }
 }
 
-#[derive(Default)]
-pub struct RandomDataSource {
-    info: Option<EntryInfo>,
-    interval: Option<Interval>,
-    summary_cache: BTreeMap<EntryID, Vec<UtilPoint>>,
-    slot_cache: BTreeMap<EntryID, SlotCacheTile>,
-    rng: rand::rngs::ThreadRng,
-    item_uid_generator: ItemUIDGenerator,
-}
+// #[derive(Default)]
+// pub struct RandomDataSource {
+//     info: Option<EntryInfo>,
+//     interval: Option<Interval>,
+//     summary_cache: BTreeMap<EntryID, Vec<UtilPoint>>,
+//     slot_cache: BTreeMap<EntryID, SlotCacheTile>,
+//     rng: rand::rngs::ThreadRng,
+//     item_uid_generator: ItemUIDGenerator,
+// }
 
-impl RandomDataSource {
-    fn generate_point(
-        &mut self,
-        first: UtilPoint,
-        last: UtilPoint,
-        level: i32,
-        max_level: i32,
-        utilization: &mut Vec<UtilPoint>,
-    ) {
-        let time = Timestamp((first.time.0 + last.time.0) / 2);
-        let util = (first.util + last.util) * 0.5;
-        let diff = (self.rng.gen::<f32>() - 0.5) / 1.2_f32.powi(max_level - level);
-        let util = (util + diff).at_least(0.0).at_most(1.0);
-        let point = UtilPoint { time, util };
-        if level > 0 {
-            self.generate_point(first, point, level - 1, max_level, utilization);
-        }
-        utilization.push(point);
-        if level > 0 {
-            self.generate_point(point, last, level - 1, max_level, utilization);
-        }
-    }
+// impl RandomDataSource {
+//     fn generate_point(
+//         &mut self,
+//         first: UtilPoint,
+//         last: UtilPoint,
+//         level: i32,
+//         max_level: i32,
+//         utilization: &mut Vec<UtilPoint>,
+//     ) {
+//         let time = Timestamp((first.time.0 + last.time.0) / 2);
+//         let util = (first.util + last.util) * 0.5;
+//         let diff = (self.rng.gen::<f32>() - 0.5) / 1.2_f32.powi(max_level - level);
+//         let util = (util + diff).at_least(0.0).at_most(1.0);
+//         let point = UtilPoint { time, util };
+//         if level > 0 {
+//             self.generate_point(first, point, level - 1, max_level, utilization);
+//         }
+//         utilization.push(point);
+//         if level > 0 {
+//             self.generate_point(point, last, level - 1, max_level, utilization);
+//         }
+//     }
 
-    fn generate_summary(&mut self, entry_id: &EntryID) -> &Vec<UtilPoint> {
-        if !self.summary_cache.contains_key(entry_id) {
-            const LEVELS: i32 = 8;
-            let first = UtilPoint {
-                time: self.interval().start,
-                util: self.rng.gen(),
-            };
-            let last = UtilPoint {
-                time: self.interval().stop,
-                util: self.rng.gen(),
-            };
-            let mut utilization = Vec::new();
-            utilization.push(first);
-            self.generate_point(first, last, LEVELS, LEVELS, &mut utilization);
-            utilization.push(last);
+//     fn generate_summary(&mut self, entry_id: &EntryID) -> &Vec<UtilPoint> {
+//         if !self.summary_cache.contains_key(entry_id) {
+//             const LEVELS: i32 = 8;
+//             let first = UtilPoint {
+//                 time: self.interval().start,
+//                 util: self.rng.gen(),
+//             };
+//             let last = UtilPoint {
+//                 time: self.interval().stop,
+//                 util: self.rng.gen(),
+//             };
+//             let mut utilization = Vec::new();
+//             utilization.push(first);
+//             self.generate_point(first, last, LEVELS, LEVELS, &mut utilization);
+//             utilization.push(last);
 
-            self.summary_cache.insert(entry_id.clone(), utilization);
-        }
-        self.summary_cache.get(entry_id).unwrap()
-    }
+//             self.summary_cache.insert(entry_id.clone(), utilization);
+//         }
+//         self.summary_cache.get(entry_id).unwrap()
+//     }
 
-    fn generate_slot(&mut self, entry_id: &EntryID) -> &SlotCacheTile {
-        if !self.slot_cache.contains_key(entry_id) {
-            let entry_info = self.fetch_info();
-            let entry = entry_info.get(entry_id);
+//     fn generate_slot(&mut self, entry_id: &EntryID) -> &SlotCacheTile {
+//         if !self.slot_cache.contains_key(entry_id) {
+//             let entry_info = self.fetch_info();
+//             let entry = entry_info.get(entry_id);
 
-            let max_rows = if let EntryInfo::Slot { max_rows, .. } = entry.unwrap() {
-                max_rows
-            } else {
-                panic!("trying to fetch tile on something that is not a slot")
-            };
+//             let max_rows = if let EntryInfo::Slot { max_rows, .. } = entry.unwrap() {
+//                 max_rows
+//             } else {
+//                 panic!("trying to fetch tile on something that is not a slot")
+//             };
 
-            let mut items = Vec::new();
-            let mut item_metas = Vec::new();
-            for row in 0..*max_rows {
-                let mut row_items = Vec::new();
-                let mut row_item_metas = Vec::new();
-                const N: u64 = 1000;
-                for i in 0..N {
-                    let start = self.interval().lerp((i as f32 + 0.05) / (N as f32));
-                    let stop = self.interval().lerp((i as f32 + 0.95) / (N as f32));
+//             let mut items = Vec::new();
+//             let mut item_metas = Vec::new();
+//             for row in 0..*max_rows {
+//                 let mut row_items = Vec::new();
+//                 let mut row_item_metas = Vec::new();
+//                 const N: u64 = 1000;
+//                 for i in 0..N {
+//                     let start = self.interval().lerp((i as f32 + 0.05) / (N as f32));
+//                     let stop = self.interval().lerp((i as f32 + 0.95) / (N as f32));
 
-                    let color = match (row * N + i) % 7 {
-                        0 => Color32::BLUE,
-                        1 => Color32::GREEN,
-                        2 => Color32::RED,
-                        3 => Color32::YELLOW,
-                        4 => Color32::KHAKI,
-                        5 => Color32::DARK_GREEN,
-                        6 => Color32::DARK_BLUE,
-                        _ => Color32::WHITE,
-                    };
+//                     let color = match (row * N + i) % 7 {
+//                         0 => Color32::BLUE,
+//                         1 => Color32::GREEN,
+//                         2 => Color32::RED,
+//                         3 => Color32::YELLOW,
+//                         4 => Color32::KHAKI,
+//                         5 => Color32::DARK_GREEN,
+//                         6 => Color32::DARK_BLUE,
+//                         _ => Color32::WHITE,
+//                     };
 
-                    let item_uid = self.item_uid_generator.next();
-                    row_items.push(Item {
-                        item_uid,
-                        interval: Interval::new(start, stop),
-                        color,
-                    });
-                    row_item_metas.push(ItemMeta {
-                        item_uid,
-                        title: "Test Item".to_owned(),
-                        fields: vec![
-                            (
-                                "Interval".to_owned(),
-                                Field::Interval(Interval::new(start, stop)),
-                            ),
-                            ("Item UID".to_owned(), Field::U64(item_uid.0)),
-                        ],
-                    });
-                }
-                items.push(row_items);
-                item_metas.push(row_item_metas);
-            }
+//                     let item_uid = self.item_uid_generator.next();
+//                     row_items.push(Item {
+//                         item_uid,
+//                         interval: Interval::new(start, stop),
+//                         color,
+//                     });
+//                     row_item_metas.push(ItemMeta {
+//                         item_uid,
+//                         title: "Test Item".to_owned(),
+//                         fields: vec![
+//                             (
+//                                 "Interval".to_owned(),
+//                                 Field::Interval(Interval::new(start, stop)),
+//                             ),
+//                             ("Item UID".to_owned(), Field::U64(item_uid.0)),
+//                         ],
+//                     });
+//                 }
+//                 items.push(row_items);
+//                 item_metas.push(row_item_metas);
+//             }
 
-            self.slot_cache
-                .insert(entry_id.clone(), (items, item_metas));
-        }
-        self.slot_cache.get(entry_id).unwrap()
-    }
-}
+//             self.slot_cache
+//                 .insert(entry_id.clone(), (items, item_metas));
+//         }
+//         self.slot_cache.get(entry_id).unwrap()
+//     }
+// }
 
-impl DataSource for RandomDataSource {
-    fn interval(&mut self) -> Interval {
-        if let Some(interval) = self.interval {
-            return interval;
-        }
-        let interval = Interval::new(
-            Timestamp(0),
-            Timestamp(self.rng.gen_range(1_000_000..2_000_000)),
-        );
-        self.interval = Some(interval);
-        interval
-    }
+// impl DataSource for RandomDataSource {
+//     fn interval(&mut self) -> Interval {
+//         if let Some(interval) = self.interval {
+//             return interval;
+//         }
+//         let interval = Interval::new(
+//             Timestamp(0),
+//             Timestamp(self.rng.gen_range(1_000_000..2_000_000)),
+//         );
+//         self.interval = Some(interval);
+//         interval
+//     }
 
-    fn fetch_info(&mut self) -> EntryInfo {
-        if let Some(ref info) = self.info {
-            return info.clone();
-        }
+//     fn fetch_info(&mut self) -> EntryInfo {
+//         if let Some(ref info) = self.info {
+//             return info.clone();
+//         }
 
-        let kinds = vec![
-            "CPU".to_string(),
-            "GPU".to_string(),
-            "OMP".to_string(),
-            "Py".to_string(),
-            "Util".to_string(),
-            "Chan".to_string(),
-            "SysMem".to_string(),
-        ];
+//         let kinds = vec![
+//             "CPU".to_string(),
+//             "GPU".to_string(),
+//             "OMP".to_string(),
+//             "Py".to_string(),
+//             "Util".to_string(),
+//             "Chan".to_string(),
+//             "SysMem".to_string(),
+//         ];
 
-        const NODES: i32 = 8192;
-        const PROCS: i32 = 8;
-        let mut node_slots = Vec::new();
-        for node in 0..NODES {
-            let mut kind_slots = Vec::new();
-            let colors = &[Color32::BLUE, Color32::GREEN, Color32::RED, Color32::YELLOW];
-            for (i, kind) in kinds.iter().enumerate() {
-                let color = colors[i % colors.len()];
-                let mut proc_slots = Vec::new();
-                for proc in 0..PROCS {
-                    let rows: u64 = self.rng.gen_range(0..64);
-                    proc_slots.push(EntryInfo::Slot {
-                        short_name: format!(
-                            "{}{}",
-                            kind.chars().next().unwrap().to_lowercase(),
-                            proc
-                        ),
-                        long_name: format!("Node {node} {kind} {proc}"),
-                        max_rows: rows,
-                    });
-                }
-                kind_slots.push(EntryInfo::Panel {
-                    short_name: kind.to_lowercase(),
-                    long_name: format!("Node {node} {kind}"),
-                    summary: Some(Box::new(EntryInfo::Summary { color })),
-                    slots: proc_slots,
-                });
-            }
-            node_slots.push(EntryInfo::Panel {
-                short_name: format!("n{node}"),
-                long_name: format!("Node {node}"),
-                summary: None,
-                slots: kind_slots,
-            });
-        }
-        self.info = Some(EntryInfo::Panel {
-            short_name: "root".to_owned(),
-            long_name: "root".to_owned(),
-            summary: None,
-            slots: node_slots,
-        });
-        self.info.as_ref().unwrap().clone()
-    }
+//         const NODES: i32 = 8192;
+//         const PROCS: i32 = 8;
+//         let mut node_slots = Vec::new();
+//         for node in 0..NODES {
+//             let mut kind_slots = Vec::new();
+//             let colors = &[Color32::BLUE, Color32::GREEN, Color32::RED, Color32::YELLOW];
+//             for (i, kind) in kinds.iter().enumerate() {
+//                 let color = colors[i % colors.len()];
+//                 let mut proc_slots = Vec::new();
+//                 for proc in 0..PROCS {
+//                     let rows: u64 = self.rng.gen_range(0..64);
+//                     proc_slots.push(EntryInfo::Slot {
+//                         short_name: format!(
+//                             "{}{}",
+//                             kind.chars().next().unwrap().to_lowercase(),
+//                             proc
+//                         ),
+//                         long_name: format!("Node {node} {kind} {proc}"),
+//                         max_rows: rows,
+//                     });
+//                 }
+//                 kind_slots.push(EntryInfo::Panel {
+//                     short_name: kind.to_lowercase(),
+//                     long_name: format!("Node {node} {kind}"),
+//                     summary: Some(Box::new(EntryInfo::Summary { color })),
+//                     slots: proc_slots,
+//                 });
+//             }
+//             node_slots.push(EntryInfo::Panel {
+//                 short_name: format!("n{node}"),
+//                 long_name: format!("Node {node}"),
+//                 summary: None,
+//                 slots: kind_slots,
+//             });
+//         }
+//         self.info = Some(EntryInfo::Panel {
+//             short_name: "root".to_owned(),
+//             long_name: "root".to_owned(),
+//             summary: None,
+//             slots: node_slots,
+//         });
+//         self.info.as_ref().unwrap().clone()
+//     }
 
-    fn request_tiles(&mut self, _entry_id: &EntryID, request_interval: Interval) -> Vec<TileID> {
-        let duration = request_interval.duration_ns();
+//     fn request_tiles(&mut self, _entry_id: &EntryID, request_interval: Interval) -> Vec<TileID> {
+//         let duration = request_interval.duration_ns();
 
-        const TILES: i64 = 3;
+//         const TILES: i64 = 3;
 
-        let mut tiles = Vec::new();
-        for i in 0..TILES {
-            let start = Timestamp(i * duration / TILES + request_interval.start.0);
-            let stop = Timestamp((i + 1) * duration / TILES + request_interval.start.0);
-            tiles.push(TileID(Interval::new(start, stop)));
-        }
-        tiles
-    }
+//         let mut tiles = Vec::new();
+//         for i in 0..TILES {
+//             let start = Timestamp(i * duration / TILES + request_interval.start.0);
+//             let stop = Timestamp((i + 1) * duration / TILES + request_interval.start.0);
+//             tiles.push(TileID(Interval::new(start, stop)));
+//         }
+//         tiles
+//     }
 
-    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SummaryTile {
-        let utilization = self.generate_summary(entry_id);
+//     fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SummaryTile {
+//         let utilization = self.generate_summary(entry_id);
 
-        let mut tile_utilization = Vec::new();
-        let mut last_point = None;
-        for point in utilization {
-            let UtilPoint { time, util } = *point;
-            if let Some(last_point) = last_point {
-                let UtilPoint {
-                    time: last_time,
-                    util: last_util,
-                } = last_point;
+//         let mut tile_utilization = Vec::new();
+//         let mut last_point = None;
+//         for point in utilization {
+//             let UtilPoint { time, util } = *point;
+//             if let Some(last_point) = last_point {
+//                 let UtilPoint {
+//                     time: last_time,
+//                     util: last_util,
+//                 } = last_point;
 
-                let last_interval = Interval::new(last_time, time);
-                if last_interval.contains(tile_id.0.start) {
-                    let relative = last_interval.unlerp(tile_id.0.start);
-                    let start_util = (last_util - util) * relative + last_util;
-                    tile_utilization.push(UtilPoint {
-                        time: tile_id.0.start,
-                        util: start_util,
-                    });
-                }
-                if tile_id.0.contains(time) {
-                    tile_utilization.push(*point);
-                }
-                if last_interval.contains(tile_id.0.stop) {
-                    let relative = last_interval.unlerp(tile_id.0.stop);
-                    let stop_util = (last_util - util) * relative + last_util;
-                    tile_utilization.push(UtilPoint {
-                        time: tile_id.0.stop,
-                        util: stop_util,
-                    });
-                }
-            }
+//                 let last_interval = Interval::new(last_time, time);
+//                 if last_interval.contains(tile_id.0.start) {
+//                     let relative = last_interval.unlerp(tile_id.0.start);
+//                     let start_util = (last_util - util) * relative + last_util;
+//                     tile_utilization.push(UtilPoint {
+//                         time: tile_id.0.start,
+//                         util: start_util,
+//                     });
+//                 }
+//                 if tile_id.0.contains(time) {
+//                     tile_utilization.push(*point);
+//                 }
+//                 if last_interval.contains(tile_id.0.stop) {
+//                     let relative = last_interval.unlerp(tile_id.0.stop);
+//                     let stop_util = (last_util - util) * relative + last_util;
+//                     tile_utilization.push(UtilPoint {
+//                         time: tile_id.0.stop,
+//                         util: stop_util,
+//                     });
+//                 }
+//             }
 
-            last_point = Some(*point);
-        }
-        SummaryTile {
-            tile_id,
-            utilization: tile_utilization,
-        }
-    }
+//             last_point = Some(*point);
+//         }
+//         SummaryTile {
+//             tile_id,
+//             utilization: tile_utilization,
+//         }
+//     }
 
-    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotTile {
-        let items = &self.generate_slot(entry_id).0;
+//     fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotTile {
+//         let items = &self.generate_slot(entry_id).0;
 
-        let mut slot_items = Vec::new();
-        for row in items {
-            let mut slot_row = Vec::new();
-            for item in row {
-                // When the item straddles a tile boundary, it has to be
-                // sliced to fit
-                if tile_id.0.overlaps(item.interval) {
-                    let mut new_item = item.clone();
-                    new_item.interval = new_item.interval.intersection(tile_id.0);
-                    slot_row.push(new_item);
-                }
-            }
-            slot_items.push(slot_row);
-        }
+//         let mut slot_items = Vec::new();
+//         for row in items {
+//             let mut slot_row = Vec::new();
+//             for item in row {
+//                 // When the item straddles a tile boundary, it has to be
+//                 // sliced to fit
+//                 if tile_id.0.overlaps(item.interval) {
+//                     let mut new_item = item.clone();
+//                     new_item.interval = new_item.interval.intersection(tile_id.0);
+//                     slot_row.push(new_item);
+//                 }
+//             }
+//             slot_items.push(slot_row);
+//         }
 
-        SlotTile {
-            tile_id,
-            items: slot_items,
-        }
-    }
+//         SlotTile {
+//             tile_id,
+//             items: slot_items,
+//         }
+//     }
 
-    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotMetaTile {
-        let (items, item_metas) = &self.generate_slot(entry_id);
+//     fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotMetaTile {
+//         let (items, item_metas) = &self.generate_slot(entry_id);
 
-        let mut slot_items = Vec::new();
-        for (row, row_meta) in items.iter().zip(item_metas.iter()) {
-            let mut slot_row = Vec::new();
-            for (item, item_meta) in row.iter().zip(row_meta.iter()) {
-                // When the item straddles a tile boundary, it has to be
-                // sliced to fit
-                if tile_id.0.overlaps(item.interval) {
-                    slot_row.push(item_meta.clone());
-                }
-            }
-            slot_items.push(slot_row);
-        }
+//         let mut slot_items = Vec::new();
+//         for (row, row_meta) in items.iter().zip(item_metas.iter()) {
+//             let mut slot_row = Vec::new();
+//             for (item, item_meta) in row.iter().zip(row_meta.iter()) {
+//                 // When the item straddles a tile boundary, it has to be
+//                 // sliced to fit
+//                 if tile_id.0.overlaps(item.interval) {
+//                     slot_row.push(item_meta.clone());
+//                 }
+//             }
+//             slot_items.push(slot_row);
+//         }
 
-        SlotMetaTile {
-            tile_id,
-            items: slot_items,
-        }
-    }
-}
+//         SlotMetaTile {
+//             tile_id,
+//             items: slot_items,
+//         }
+//     }
+// }

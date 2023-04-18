@@ -17,6 +17,13 @@ pub enum EntryIndex {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct Initializer {
+    pub entry_info: EntryInfo,
+    pub interval: Interval,
+}
+
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum EntryInfo {
     Panel {
         short_name: String,
@@ -96,13 +103,31 @@ pub struct SlotMetaTile {
 pub trait DataSource {
     fn interval(&mut self) -> Interval;
     fn fetch_info(&mut self) -> EntryInfo;
-    fn request_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) -> Option<Vec<TileID>>;
+    fn init(&mut self) -> Initializer;
+    fn request_tiles(
+        &mut self,
+        entry_id: &EntryID,
+        request_interval: Interval,
+    ) -> Option<Vec<TileID>>;
     fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SummaryTile>;
-    fn fetch_summary_tiles(&mut self, entry_id: &EntryID, tile_id: Vec<TileID>) -> Option<Vec<SummaryTile>>;
+    fn fetch_summary_tiles(
+        &mut self,
+        entry_id: &EntryID,
+        tile_id: Vec<TileID>,
+    ) -> Option<Vec<SummaryTile>>;
     fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SlotTile>;
-    fn fetch_slot_tiles(&mut self, entry_id: &EntryID, tile_id: Vec<TileID>) -> Option<Vec<SlotTile>>;
-    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SlotMetaTile>;
-    fn fetch_slot_meta_tiles(&mut self, entry_id: &EntryID, tile_id: Vec<TileID>) -> Option<Vec<SlotMetaTile>>;
+    fn fetch_slot_tiles(
+        &mut self,
+        entry_id: &EntryID,
+        tile_id: Vec<TileID>,
+    ) -> Option<Vec<SlotTile>>;
+    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID)
+        -> Option<SlotMetaTile>;
+    fn fetch_slot_meta_tiles(
+        &mut self,
+        entry_id: &EntryID,
+        tile_id: Vec<TileID>,
+    ) -> Option<Vec<SlotMetaTile>>;
 }
 
 impl EntryID {

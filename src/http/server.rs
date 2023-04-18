@@ -3,12 +3,13 @@ use crate::data::{DataSource, EntryInfo};
 use actix_web::{
     middleware,
     web::{self, Data},
-    App, HttpResponse, HttpServer, Responder, Result,
+    App, HttpResponse, HttpServer, Responder, Result, http,
 };
+use actix_cors::Cors;
 
 use std::sync::{Arc, Mutex};
 
-use super::schema::{FetchRequest, FetchTilesRequest};
+use super::schema::{FetchMultipleRequest, FetchRequest, FetchTilesRequest};
 
 // dyn DataSource + Sync + Send + 'static> from
 // https://stackoverflow.com/questions/65645622/how-do-i-pass-a-trait-as-application-data-to-actix-web
@@ -71,7 +72,7 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let request_interval = info.interval;
-        let to_ret = source.request_tiles(entry_id, request_interval);
+        let to_ret = source.request_tiles(entry_id, request_interval).unwrap();
         Ok(web::Json(to_ret))
     }
 
@@ -84,7 +85,22 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let tile_id = info.tile_id;
-        let to_ret = source.fetch_slot_meta_tile(entry_id, tile_id);
+        let to_ret = source.fetch_slot_meta_tile(entry_id, tile_id).unwrap();
+        Ok(web::Json(to_ret))
+    }
+
+    async fn fetch_slot_meta_tiles(
+        info: web::Json<FetchMultipleRequest>,
+        data: web::Data<AppState>,
+    ) -> Result<impl Responder> {
+        let mutex = &data.data_source;
+        let mut source = mutex.lock().unwrap();
+
+        let entry_id = &info.entry_id;
+        let tile_ids = &info.tile_ids;
+        let to_ret = source
+            .fetch_slot_meta_tiles(entry_id, tile_ids.to_vec())
+            .unwrap();
         Ok(web::Json(to_ret))
     }
 
@@ -97,7 +113,22 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let tile_id = info.tile_id;
-        let to_ret = source.fetch_slot_tile(entry_id, tile_id);
+        let to_ret = source.fetch_slot_tile(entry_id, tile_id).unwrap();
+        Ok(web::Json(to_ret))
+    }
+
+    async fn fetch_slot_tiles(
+        info: web::Json<FetchMultipleRequest>,
+        data: web::Data<AppState>,
+    ) -> Result<impl Responder> {
+        let mutex = &data.data_source;
+        let mut source = mutex.lock().unwrap();
+
+        let entry_id = &info.entry_id;
+        let tile_ids = &info.tile_ids;
+        let to_ret = source
+            .fetch_slot_tiles(entry_id, tile_ids.to_vec())
+            .unwrap();
         Ok(web::Json(to_ret))
     }
 
@@ -110,7 +141,29 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let tile_id = info.tile_id;
-        let to_ret = source.fetch_summary_tile(entry_id, tile_id);
+        let to_ret = source.fetch_summary_tile(entry_id, tile_id).unwrap();
+        Ok(web::Json(to_ret))
+    }
+
+    async fn fetch_summary_tiles(
+        info: web::Json<FetchMultipleRequest>,
+        data: web::Data<AppState>,
+    ) -> Result<impl Responder> {
+        let mutex = &data.data_source;
+        let mut source = mutex.lock().unwrap();
+
+        let entry_id = &info.entry_id;
+        let tile_ids = &info.tile_ids;
+        let to_ret = source
+            .fetch_summary_tiles(entry_id, tile_ids.to_vec())
+            .unwrap();
+        Ok(web::Json(to_ret))
+    }
+
+    async fn init(data: web::Data<AppState>) -> Result<impl Responder> {
+        let mutex = &data.data_source;
+        let mut source = mutex.lock().unwrap();
+        let to_ret = source.init();
         Ok(web::Json(to_ret))
     }
 
@@ -120,17 +173,36 @@ impl DataSourceHTTPServer {
         std::env::set_var("RUST_LOG", "debug");
         env_logger::init();
         HttpServer::new(move || {
+            let cors = Cors::default()
+            .send_wildcard()
+            .allow_any_origin()
+            // .allowed_origin("All")
+            .allowed_methods(vec!["GET", "POST"])
+            .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
+            .allowed_header(http::header::CONTENT_TYPE)
+            .max_age(3600);
             App::new()
                 .wrap(middleware::Logger::default())
                 .wrap(middleware::Compress::default())
+                .wrap(cors)
                 .app_data(state.clone())
-                .route("/entry", web::get().to(Self::get_entry_name))
-                .route("/info", web::get().to(Self::fetch_info))
-                .route("/interval", web::get().to(Self::interval))
-                .route("/tiles", web::get().to(Self::fetch_tiles))
-                .route("/slot_meta_tile", web::get().to(Self::fetch_slot_meta_tile))
-                .route("/slot_tile", web::get().to(Self::fetch_slot_tile))
-                .route("/summary_tile", web::get().to(Self::fetch_summary_tile))
+                .route("/entry", web::post().to(Self::get_entry_name))
+                .route("/info", web::post().to(Self::fetch_info))
+                .route("/interval", web::post().to(Self::interval))
+                .route("/tiles", web::post().to(Self::fetch_tiles))
+                .route(
+                    "/slot_meta_tile",
+                    web::post().to(Self::fetch_slot_meta_tile),
+                )
+                .route("/slot_tile", web::post().to(Self::fetch_slot_tile))
+                .route("/summary_tile", web::post().to(Self::fetch_summary_tile))
+                .route(
+                    "/slot_meta_tiles",
+                    web::post().to(Self::fetch_slot_meta_tiles),
+                )
+                .route("/slot_tiles", web::post().to(Self::fetch_slot_tiles))
+                .route("/summaries", web::post().to(Self::fetch_summary_tiles))
+                .route("/init", web::post().to(Self::init))
         })
         .bind((self.host.as_str(), self.port))?
         .run()

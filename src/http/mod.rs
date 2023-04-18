@@ -1,8 +1,8 @@
 pub mod schema;
 
-// #[cfg(feature = "client")]
+#[cfg(feature = "client")]
 pub mod client;
-// #[cfg(feature = "server")]
+#[cfg(feature = "server")]
 pub mod server;
 
 pub mod queueclient;

@@ -4,12 +4,10 @@ use std::collections::BTreeMap;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
-use egui::{Align2, Color32, NumExt, Pos2, Rect, ScrollArea, Slider, Stroke, TextStyle, Vec2};
-use serde::{Deserialize, Serialize};
-
 use crate::data::{
     DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
+use crate::logging::{console_log, log};
 use crate::search::{SelectedItem, SelectedState};
 use crate::timestamp::Interval;
 
@@ -175,15 +173,17 @@ trait Entry {
             *style.noninteractive()
         };
 
+        // prevent text overflow
         ui.painter()
             .rect(rect, 0.0, visuals.bg_fill, visuals.bg_stroke);
-        ui.painter().text(
-            rect.min + style.spacing.item_spacing,
-            Align2::LEFT_TOP,
-            self.label_text(),
+        let lay = ui.painter().layout(
+            self.label_text().to_string(),
             font_id,
             visuals.text_color(),
+            rect.width() - style.spacing.item_spacing.x * 2.0,
         );
+        ui.painter()
+            .galley(rect.min + style.spacing.item_spacing, lay);
 
         if response.clicked() {
             // This will take effect next frame because we can't redraw this widget now
@@ -216,14 +216,20 @@ impl Summary {
 
     fn inflate(&mut self, config: &mut Config, cx: &Context) {
         self.is_inflating = true;
+        console_log!("inflating summary {:?}", self.entry_id);
+        console_log!("config interval: {:?}", config.interval);
+        console_log!("view interval: {:?}", cx.view_interval);
         let interval = config.interval.intersection(cx.view_interval);
         let t_opt = config.data_source.request_tiles(&self.entry_id, interval);
         if let Some(tiles) = t_opt {
+            console_log!("got tiles: {:?}", tiles);
             let s_tiles_opt = config
                 .data_source
-                .fetch_summary_tiles(&self.entry_id, tiles);
+                .fetch_summary_tiles(&self.entry_id, tiles.clone());
 
             if let Some(s_tiles) = s_tiles_opt {
+                console_log!("got more tiles: {:?}", tiles.clone());
+
                 for s_tile in s_tiles {
                     self.utilization.extend(s_tile.utilization);
                 }
@@ -235,6 +241,9 @@ impl Summary {
 
 impl Entry for Summary {
     fn new(info: &EntryInfo, entry_id: EntryID) -> Self {
+        log("test");
+        console_log!("Summary::new({:?}, {:?}", info, entry_id);
+
         if let EntryInfo::Summary { color } = info {
             Self {
                 entry_id,
@@ -271,7 +280,6 @@ impl Entry for Summary {
         const TOOLTIP_RADIUS: f32 = 4.0;
         let response = ui.allocate_rect(rect, egui::Sense::hover());
         let hover_pos = response.hover_pos(); // where is the mouse hovering?
-
         if self
             .last_view_interval
             .map_or(true, |i| i != cx.view_interval)
@@ -279,7 +287,7 @@ impl Entry for Summary {
             self.clear();
         }
         self.last_view_interval = Some(cx.view_interval);
-        if self.utilization.is_empty() {
+        if self.utilization.is_empty() || self.is_inflating {
             self.inflate(config, cx);
         }
 
@@ -390,6 +398,8 @@ impl Slot {
     fn inflate(&mut self, config: &mut Config, cx: &Context) {
         self.is_inflating = true;
 
+        console_log!("config interval: {:?}", config.interval);
+        console_log!("view interval: {:?}", cx.view_interval);
         let interval = config.interval.intersection(cx.view_interval);
         let t_opt = config.data_source.request_tiles(&self.entry_id, interval);
         if let Some(tiles) = t_opt {
@@ -412,9 +422,9 @@ impl Slot {
             let tile_opt = config
                 .data_source
                 .fetch_slot_meta_tile(&self.entry_id, tile_id);
-            if let Some(tile) = tile_opt {
+            if let Some(tile) = tile_opt.clone() {
                 self.tile_metas.insert(tile_id, tile);
-                tile_opt
+                tile_opt.clone()
             } else {
                 None
             }
@@ -427,6 +437,7 @@ impl Slot {
         tile_index: usize,
         rows: u64,
         mut hover_pos: Option<Pos2>,
+        clicked: bool,
         ui: &mut egui::Ui,
         rect: Rect,
         viewport: Rect,
@@ -437,7 +448,7 @@ impl Slot {
         let tile = &self.tiles[tile_index];
         let tile_id = tile.tile_id;
 
-        if !cx.view_interval.overlaps(tile_id.0) {
+        if !cx.view_interval.overlaps(tile_id.0) && cx.selected_state.selected.is_none() {
             return hover_pos;
         }
 
@@ -457,9 +468,11 @@ impl Slot {
 
             // Cull if out of bounds
             // Note: need to shift by rect.min to get to viewport space
-            if row_max.y - rect.min.y < viewport.min.y {
+            if row_max.y - rect.min.y < viewport.min.y && cx.selected_state.selected.is_none() {
                 break;
-            } else if row_min.y - rect.min.y > viewport.max.y {
+            } else if row_min.y - rect.min.y > viewport.max.y
+                && cx.selected_state.selected.is_none()
+            {
                 continue;
             }
 
@@ -568,38 +581,41 @@ impl Slot {
                 } else {
                     ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                 }
-                ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
             }
         }
 
         if let Some((row, item_idx, item_rect, tile_id)) = interact_item {
-            let tile_meta = self.fetch_meta_tile(tile_id, config);
-            let item_meta = &tile_meta.items[row][item_idx];
-            ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
-                ui.label(&item_meta.title);
-                for (name, field) in &item_meta.fields {
-                    match field {
-                        Field::I64(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::U64(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::String(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::Interval(value) => {
-                            ui.label(format!("{name}: {value}"));
-                        }
-                        Field::Empty => {
-                            ui.label(name);
+            if let Some(tile_meta) = self.fetch_meta_tile(tile_id, config) {
+                let item_meta = &tile_meta.items[row][item_idx];
+                ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
+                    ui.label(&item_meta.title);
+                    if cx.debug {
+                        ui.label(format!("Item UID: {}", item_meta.item_uid.0));
+                    }
+                    for (name, field) in &item_meta.fields {
+                        match field {
+                            Field::I64(value) => {
+                                ui.label(format!("{name}: {value}"));
+                            }
+                            Field::U64(value) => {
+                                ui.label(format!("{name}: {value}"));
+                            }
+                            Field::String(value) => {
+                                ui.label(format!("{name}: {value}"));
+                            }
+                            Field::Interval(value) => {
+                                ui.label(format!("{name}: {value}"));
+                            }
+                            Field::Empty => {
+                                ui.label(name);
+                            }
                         }
                     }
-                }
-            });
-
-            hover_pos
+                });
+            }
         }
+
+        hover_pos
     }
 }
 
@@ -682,8 +698,9 @@ impl Entry for Slot {
 
             let rows = self.rows();
             for tile_index in 0..self.tiles.len() {
-                hover_pos =
-                    self.render_tile(tile_index, rows, hover_pos, ui, rect, viewport, config, cx);
+                hover_pos = self.render_tile(
+                    tile_index, rows, hover_pos, clicked, ui, rect, viewport, config, cx,
+                );
             }
         }
     }
@@ -723,9 +740,9 @@ impl<S: Entry> Panel<S> {
 
         // Cull if out of bounds
         // Note: need to shift by rect.min to get to viewport space
-        if max_y - rect.min.y < viewport.min.y {
+        if max_y - rect.min.y < viewport.min.y && cx.selected_state.selected.is_none() {
             return false;
-        } else if min_y - rect.min.y > viewport.max.y {
+        } else if min_y - rect.min.y > viewport.max.y && cx.selected_state.selected.is_none() {
             return true;
         }
 
@@ -767,6 +784,7 @@ impl<S: Entry> Entry for Panel<S> {
             slots,
         } = info
         {
+            console_log!("Creating panel: {:?}", entry_id);
             let expanded = entry_id.level() != 2;
             let summary = summary
                 .as_ref()
@@ -875,12 +893,14 @@ impl<S: Entry> Entry for Panel<S> {
 impl Config {
     fn new(mut data_source: Box<dyn DataSource>) -> Self {
         let max_node = data_source.fetch_info().nodes();
+        let interval = data_source.init().interval;
+
+        console_log!("configinterval: {:?}", interval);
+        
         Self {
             min_node: 0,
             max_node,
-
-            interval: data_source.interval(),
-
+            interval,
             data_source,
         }
     }
@@ -899,6 +919,9 @@ impl Window {
     }
 
     fn content(&mut self, ui: &mut egui::Ui, cx: &mut Context) {
+        // reaquire the data source interval
+        cx.view_interval = self.config.data_source.interval();
+
         ui.horizontal(|ui| {
             ui.heading(format!("Profile {}", self.index));
             ui.label(cx.view_interval.to_string())
@@ -1058,8 +1081,6 @@ impl ProfApp {
         // This is also where you can customized the look at feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
 
-        cc.egui_ctx.set_visuals(egui::Visuals::light());
-
         // Load previous app state (if any).
         // Note that you must enable the `persistence` feature for this to work.
         let mut result: Self = if let Some(storage) = cc.storage {
@@ -1091,6 +1112,7 @@ impl ProfApp {
     }
 
     fn zoom(cx: &mut Context, interval: Interval) {
+        console_log!("zoom: {:?}", interval);
         if cx.view_interval == interval {
             return;
         }
@@ -1179,9 +1201,9 @@ impl ProfApp {
             cx.drag_origin = response.interact_pointer_pos();
         }
 
-        if let Some(origin) = cx.drag_origin {
+        if let (Some(origin), Some(current)) = (cx.drag_origin, response.interact_pointer_pos()) {
             // We're in a drag, calculate the drag inetrval
-            let current = response.interact_pointer_pos().unwrap();
+
             let min = origin.x.min(current.x);
             let max = origin.x.max(current.x);
 
@@ -1259,8 +1281,6 @@ impl ProfApp {
                     ui.label(format!("t={time}"));
                 }
             });
-
-            // ui.show_tooltip_at("timestamp_tooltip", Some(top), format!("t={time}"));
         }
     }
 }
@@ -1271,7 +1291,7 @@ impl eframe::App for ProfApp {
         eframe::set_value(storage, eframe::APP_KEY, self);
     }
 
-    /// Called each time the UI needs repainting.
+    // Called each time the UI needs repainting.
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let Self {
             windows,
@@ -1551,26 +1571,6 @@ impl eframe::App for ProfApp {
                 ui.set_height(60.0);
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 0.0;
-
-                    let debug_color = if cx.debug {
-                        ui.visuals().hyperlink_color
-                    } else {
-                        ui.visuals().text_color()
-                    };
-
-                    let button =
-                        egui::Button::new(egui::RichText::new("🛠").color(debug_color).size(18.0))
-                            .frame(false);
-                    if ui
-                        .add(button)
-                        .on_hover_text(format!(
-                            "Toggle debug mode {}",
-                            if cx.debug { "off" } else { "on" }
-                        ))
-                        .clicked()
-                    {
-                        cx.debug = !cx.debug;
-                    }
                     ui.label("powered by ");
                     ui.hyperlink_to("egui", "https://github.com/emilk/egui");
                     ui.label(" and ");
@@ -1628,6 +1628,7 @@ impl eframe::App for ProfApp {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // Use body font to figure out how tall to draw rectangles.
+
             let font_id = TextStyle::Body.resolve(ui.style());
             let row_height = ui.fonts(|f| f.row_height(&font_id));
             // Just set this on every frame for now
@@ -1651,7 +1652,6 @@ impl eframe::App for ProfApp {
                     window.content(ui, cx);
                 }
             }
-
             Self::cursor(ui, cx);
         });
 
@@ -1730,6 +1730,36 @@ impl UiExtra for egui::Ui {
                 ui.add(egui::Label::new(text));
             },
         );
+    }
+}
+
+fn get_entries_with_level<'a>(items: &Vec<&'a EntryID>, level: u64) -> Vec<Vec<&'a EntryID>> {
+    let mut split: Vec<Vec<&EntryID>> = vec![vec![]];
+    for entry in items {
+        let sublist = split.last_mut().unwrap();
+        match sublist.last_mut() {
+            Some(x) if entry.slot_index(level).unwrap() != x.slot_index(level).unwrap() => {
+                split.push(vec![entry]);
+            }
+            _ => sublist.push(entry),
+        }
+    }
+    split
+}
+
+fn get_filtered_entries<'a>(
+    level_entries: &Vec<Vec<&'a EntryID>>,
+    slot_index: u64,
+    i: usize,
+) -> Vec<&'a EntryID> {
+    let index = level_entries
+        .iter()
+        .position(|x| !x.is_empty() && x[0].slot_index(slot_index).unwrap() == i as u64);
+
+    if let Some(index) = index {
+        level_entries[index].clone()
+    } else {
+        Vec::new()
     }
 }
 

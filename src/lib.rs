@@ -5,5 +5,5 @@ pub mod data;
 pub mod timestamp;
 pub mod search;
 pub mod http;
-pub mod temp;
 pub mod queue;
+pub mod logging;
