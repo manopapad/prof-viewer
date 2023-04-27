@@ -71,18 +71,21 @@ pub struct TileID(pub Interval);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SummaryTile {
+    pub entry_id: EntryID,
     pub tile_id: TileID,
     pub utilization: Vec<UtilPoint>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SlotTile {
+    pub entry_id: EntryID,
     pub tile_id: TileID,
     pub items: Vec<Vec<Item>>, // row -> [item]
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SlotMetaTile {
+    pub entry_id: EntryID,
     pub tile_id: TileID,
     pub items: Vec<Vec<ItemMeta>>, // row -> [item]
 }

@@ -276,6 +276,7 @@ impl DataSource for RandomDataSource {
             last_point = Some(*point);
         }
         SummaryTile {
+            entry_id: entry_id.clone(),
             tile_id,
             utilization: tile_utilization,
         }
@@ -300,6 +301,7 @@ impl DataSource for RandomDataSource {
         }
 
         SlotTile {
+            entry_id: entry_id.clone(),
             tile_id,
             items: slot_items,
         }
@@ -322,6 +324,7 @@ impl DataSource for RandomDataSource {
         }
 
         SlotMetaTile {
+            entry_id: entry_id.clone(),
             tile_id,
             items: slot_items,
         }
