@@ -43,7 +43,7 @@ use crate::timestamp::Interval;
 struct Summary {
     entry_id: EntryID,
     color: Color32,
-    utilization: Vec<UtilPoint>,
+    utilization: BTreeMap<TileID, Option<SummaryTile>>,
     last_view_interval: Option<Interval>,
 }
 
@@ -53,8 +53,8 @@ struct Slot {
     long_name: String,
     expanded: bool,
     max_rows: u64,
-    tiles: Vec<SlotTile>,
-    tile_metas: BTreeMap<TileID, SlotMetaTile>,
+    tiles: BTreeMap<TileID, Option<SlotTile>>,
+    tile_metas: BTreeMap<TileID, Option<SlotMetaTile>>,
     last_view_interval: Option<Interval>,
 }
 
@@ -203,11 +203,12 @@ impl Summary {
         let interval = config.interval.intersection(cx.view_interval);
         let tiles = config.data_source.request_tiles(&self.entry_id, interval);
         for tile_id in tiles {
-            let tile = config
+            config
                 .data_source
                 .fetch_summary_tile(&self.entry_id, tile_id);
-            self.utilization.extend(tile.utilization);
+            // self.utilization.extend(tile.utilization);
         }
+        self.utilization = Some(Vec::new());
     }
 }
 
@@ -256,7 +257,7 @@ impl Entry for Summary {
             self.clear();
         }
         self.last_view_interval = Some(cx.view_interval);
-        if self.utilization.is_empty() {
+        if self.utilization.is_none() {
             self.inflate(config, cx);
         }
 
@@ -373,11 +374,12 @@ impl Slot {
         }
     }
 
-    fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config) -> &mut SlotMetaTile {
+    fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config) -> Option<&mut SlotMetaTile> {
         self.tile_metas.entry(tile_id).or_insert_with(|| {
             config
                 .data_source
-                .fetch_slot_meta_tile(&self.entry_id, tile_id)
+                .fetch_slot_meta_tile(&self.entry_id, tile_id);
+            None
         })
     }
 
@@ -451,7 +453,7 @@ impl Slot {
         }
 
         if let Some((row, item_idx, item_rect, tile_id)) = interact_item {
-            let tile_meta = self.fetch_meta_tile(tile_id, config);
+            if let Some(tile_meta) = self.fetch_meta_tile(tile_id, config) {
             let item_meta = &tile_meta.items[row][item_idx];
             ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
                 ui.label(&item_meta.title);
@@ -475,6 +477,7 @@ impl Slot {
                     }
                 }
             });
+            }
         }
 
         hover_pos
@@ -1058,6 +1061,15 @@ impl eframe::App for ProfApp {
             last_update,
             ..
         } = self;
+
+        // call get_...
+        let tiles = self.data_source.get_meta_tiles();
+        for tile in tiles {
+            let entry = ....;
+            if let Some(ref mut t) = entry.tile_meta.get(tile.tile_id) {
+                *t = ...
+            }
+        }
 
         let mut _fps = 0.0;
         #[cfg(not(target_arch = "wasm32"))]
