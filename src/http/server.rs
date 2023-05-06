@@ -72,7 +72,7 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let request_interval = info.interval;
-        let to_ret = source.request_tiles(entry_id, request_interval).unwrap();
+        let to_ret = source.fetch_tiles(entry_id, request_interval);
         Ok(web::Json(to_ret))
     }
 
@@ -85,22 +85,7 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let tile_id = info.tile_id;
-        let to_ret = source.fetch_slot_meta_tile(entry_id, tile_id).unwrap();
-        Ok(web::Json(to_ret))
-    }
-
-    async fn fetch_slot_meta_tiles(
-        info: web::Json<FetchMultipleRequest>,
-        data: web::Data<AppState>,
-    ) -> Result<impl Responder> {
-        let mutex = &data.data_source;
-        let mut source = mutex.lock().unwrap();
-
-        let entry_id = &info.entry_id;
-        let tile_ids = &info.tile_ids;
-        let to_ret = source
-            .fetch_slot_meta_tiles(entry_id, tile_ids.to_vec())
-            .unwrap();
+        let to_ret = source.fetch_slot_meta_tile(entry_id, tile_id);
         Ok(web::Json(to_ret))
     }
 
@@ -113,24 +98,10 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let tile_id = info.tile_id;
-        let to_ret = source.fetch_slot_tile(entry_id, tile_id).unwrap();
+        let to_ret = source.fetch_slot_tile(entry_id, tile_id);
         Ok(web::Json(to_ret))
     }
 
-    async fn fetch_slot_tiles(
-        info: web::Json<FetchMultipleRequest>,
-        data: web::Data<AppState>,
-    ) -> Result<impl Responder> {
-        let mutex = &data.data_source;
-        let mut source = mutex.lock().unwrap();
-
-        let entry_id = &info.entry_id;
-        let tile_ids = &info.tile_ids;
-        let to_ret = source
-            .fetch_slot_tiles(entry_id, tile_ids.to_vec())
-            .unwrap();
-        Ok(web::Json(to_ret))
-    }
 
     async fn fetch_summary_tile(
         info: web::Json<FetchRequest>,
@@ -141,24 +112,10 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let tile_id = info.tile_id;
-        let to_ret = source.fetch_summary_tile(entry_id, tile_id).unwrap();
+        let to_ret = source.fetch_summary_tile(entry_id, tile_id);
         Ok(web::Json(to_ret))
     }
 
-    async fn fetch_summary_tiles(
-        info: web::Json<FetchMultipleRequest>,
-        data: web::Data<AppState>,
-    ) -> Result<impl Responder> {
-        let mutex = &data.data_source;
-        let mut source = mutex.lock().unwrap();
-
-        let entry_id = &info.entry_id;
-        let tile_ids = &info.tile_ids;
-        let to_ret = source
-            .fetch_summary_tiles(entry_id, tile_ids.to_vec())
-            .unwrap();
-        Ok(web::Json(to_ret))
-    }
 
     async fn init(data: web::Data<AppState>) -> Result<impl Responder> {
         let mutex = &data.data_source;
@@ -196,12 +153,6 @@ impl DataSourceHTTPServer {
                 )
                 .route("/slot_tile", web::post().to(Self::fetch_slot_tile))
                 .route("/summary_tile", web::post().to(Self::fetch_summary_tile))
-                .route(
-                    "/slot_meta_tiles",
-                    web::post().to(Self::fetch_slot_meta_tiles),
-                )
-                .route("/slot_tiles", web::post().to(Self::fetch_slot_tiles))
-                .route("/summaries", web::post().to(Self::fetch_summary_tiles))
                 .route("/init", web::post().to(Self::init))
         })
         .bind((self.host.as_str(), self.port))?

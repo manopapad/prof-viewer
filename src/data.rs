@@ -7,7 +7,7 @@ use crate::timestamp::{Interval, Timestamp};
 // We encode EntryID as i64 because it allows us to pack Summary into the
 // value -1. Users shouldn't need to know about this and interact through the
 // methods below, or via EntryIndex.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Hash)]
 pub struct EntryID(Vec<i64>);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -21,7 +21,6 @@ pub struct Initializer {
     pub entry_info: EntryInfo,
     pub interval: Interval,
 }
-
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub enum EntryInfo {
@@ -79,7 +78,7 @@ impl PartialEq for ItemMeta {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize, Hash)]
 pub struct TileID(pub Interval);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -101,33 +100,22 @@ pub struct SlotMetaTile {
 }
 
 pub trait DataSource {
+
+    fn init(&mut self) -> Initializer;
     fn interval(&mut self) -> Interval;
     fn fetch_info(&mut self) -> EntryInfo;
-    fn init(&mut self) -> Initializer;
-    fn request_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        request_interval: Interval,
-    ) -> Option<Vec<TileID>>;
-    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SummaryTile>;
-    fn fetch_summary_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        tile_id: Vec<TileID>,
-    ) -> Option<Vec<SummaryTile>>;
-    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SlotTile>;
-    fn fetch_slot_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        tile_id: Vec<TileID>,
-    ) -> Option<Vec<SlotTile>>;
-    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID)
-        -> Option<SlotMetaTile>;
-    fn fetch_slot_meta_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        tile_id: Vec<TileID>,
-    ) -> Option<Vec<SlotMetaTile>>;
+
+    fn fetch_tiles(&mut self, entry_id: &EntryID, request_interval: Interval);
+    fn get_tiles(&mut self, entry_id: &EntryID) -> Vec<TileID>;
+
+    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID);
+    fn get_summary_tiles(&mut self, entry_id: &EntryID) -> Vec<SummaryTile>;
+
+    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID);
+    fn get_slot_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotTile>;
+
+    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID);
+    fn get_slot_meta_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotMetaTile>;
 }
 
 impl EntryID {

@@ -26,13 +26,10 @@ pub struct HTTPQueueDataSource {
     pub fetch_info: EntryInfo,
     pub initializer: Initializer,
     pub interval: Interval,
-    request_tiles_cache: BTreeMap<(EntryID, Interval), Vec<TileID>>,
-    fetch_summary_tile_cache: BTreeMap<(EntryID, TileID), SummaryTile>,
-    fetch_summary_tiles_cache: BTreeMap<(EntryID, Vec<TileID>), Vec<SummaryTile>>,
-    fetch_slot_tile_cache: BTreeMap<(EntryID, TileID), SlotTile>,
-    fetch_slot_tiles_cache: BTreeMap<(EntryID, Vec<TileID>), Vec<SlotTile>>,
-    fetch_slot_meta_tile_cache: BTreeMap<(EntryID, TileID), SlotMetaTile>,
-    fetch_slot_meta_tiles_cache: BTreeMap<(EntryID, Vec<TileID>), Vec<SlotMetaTile>>,
+    fetch_tiles_cache: BTreeMap<EntryID, Vec<TileID>>,
+    fetch_summary_tiles_cache: BTreeMap<EntryID, Vec<SummaryTile>>,
+    fetch_slot_tiles_cache: BTreeMap<EntryID, Vec<SlotTile>>,
+    fetch_slot_meta_tiles_cache: BTreeMap<EntryID, Vec<SlotMetaTile>>,
 }
 
 impl HTTPQueueDataSource {
@@ -57,10 +54,7 @@ impl HTTPQueueDataSource {
             fetch_info: initializer.clone().entry_info,
             initializer: initializer.clone(),
             interval: Interval::default(),
-            request_tiles_cache: BTreeMap::new(),
-            fetch_slot_meta_tile_cache: BTreeMap::new(),
-            fetch_slot_tile_cache: BTreeMap::new(),
-            fetch_summary_tile_cache: BTreeMap::new(),
+            fetch_tiles_cache: BTreeMap::new(),
             fetch_summary_tiles_cache: BTreeMap::new(),
             fetch_slot_meta_tiles_cache: BTreeMap::new(),
             fetch_slot_tiles_cache: BTreeMap::new(),
@@ -77,55 +71,29 @@ impl HTTPQueueDataSource {
                 ProcessType::FETCH_SLOT_META_TILE => {
                     // deserialize work.data into SlotMetaTile
                     let smt = serde_json::from_str::<SlotMetaTile>(&work.data).unwrap();
-                    // add to cache
-                    self.fetch_slot_meta_tile_cache
-                        .insert((work.entry_id.clone(), smt.tile_id), smt);
+                    // add to cache or create new vector
+
+                    self.fetch_slot_meta_tiles_cache.entry(work.entry_id.clone()).or_insert(vec![smt.clone()]).push(smt.clone());
                 }
                 ProcessType::FETCH_SLOT_TILE => {
                     // deserialize work.data into SlotTile
                     let st = serde_json::from_str::<SlotTile>(&work.data).unwrap();
                     // add to cache
-                    self.fetch_slot_tile_cache
-                        .insert((work.entry_id.clone(), st.tile_id), st);
+                    self.fetch_slot_tiles_cache.entry(work.entry_id.clone()).or_insert(vec![st.clone()]).push(st.clone());
+
                 }
 
-                ProcessType::REQUEST_TILES => {
+                ProcessType::FETCH_TILES => {
                     // deserialize work.data into Vec<TileID>
                     let tiles = serde_json::from_str::<Vec<TileID>>(&work.data).unwrap();
                     // add to cache
-                    self.request_tiles_cache
-                        .insert((work.entry_id.clone(), work.interval.unwrap()), tiles);
+                    self.fetch_tiles_cache.entry(work.entry_id.clone()).or_insert(tiles.clone()).extend(tiles.clone());
                 }
                 ProcessType::FETCH_SUMMARY_TILE => {
                     // deserialize work.data into SummaryTile
                     let st = serde_json::from_str::<SummaryTile>(&work.data).unwrap();
                     // add to cache
-                    self.fetch_summary_tile_cache
-                        .insert((work.entry_id.clone(), st.tile_id), st);
-                }
-                ProcessType::FETCH_SLOT_META_TILES => {
-                    // deserialize work.data into Vec<SlotMetaTile>
-                    let smts = serde_json::from_str::<Vec<SlotMetaTile>>(&work.data).unwrap();
-                    // add to cache
-                    self.fetch_slot_meta_tiles_cache.insert(
-                        (work.entry_id.clone(), work.tile_ids.clone().unwrap()),
-                        smts,
-                    );
-                }
-                ProcessType::FETCH_SLOT_TILES => {
-                    // deserialize work.data into Vec<SlotTile>
-                    let sts = serde_json::from_str::<Vec<SlotTile>>(&work.data).unwrap();
-                    // add to cache
-                    self.fetch_slot_tiles_cache
-                        .insert((work.entry_id.clone(), work.tile_ids.clone().unwrap()), sts);
-                }
-                ProcessType::FETCH_SUMMARY_TILES => {
-                    // deserialize work.data into Vec<SummaryTile>
-                    let sts = serde_json::from_str::<Vec<SummaryTile>>(&work.data).unwrap();
-                    // add to cache
-                    console_log!("adding to cache: {:?}", work);
-                    self.fetch_summary_tiles_cache
-                        .insert((work.entry_id.clone(), work.tile_ids.clone().unwrap()), sts);
+                    self.fetch_summary_tiles_cache.entry(work.entry_id.clone()).or_insert(vec![st.clone()]).push(st.clone());
                 }
                 ProcessType::INTERVAL => {
                     // deserialize work.data into Interval
@@ -134,13 +102,10 @@ impl HTTPQueueDataSource {
                     self.interval = interval;
 
                     // clear all the caches
-                    self.request_tiles_cache.clear();
-                    self.fetch_slot_meta_tile_cache.clear();
-                    self.fetch_slot_tile_cache.clear();
-                    self.fetch_summary_tile_cache.clear();
-                    self.fetch_summary_tiles_cache.clear();
-                    self.fetch_slot_meta_tiles_cache.clear();
-                    self.fetch_slot_tiles_cache.clear();
+                    // self.FETCH_TILES_cache.clear();
+                    // self.fetch_summary_tiles_cache.clear();
+                    // self.fetch_slot_meta_tiles_cache.clear();
+                    // self.fetch_slot_tiles_cache.clear();
                 }
             }
         }
@@ -156,18 +121,9 @@ impl HTTPQueueDataSource {
                 format!("http://{}:{}/slot_meta_tile", self.host, self.port)
             }
             ProcessType::FETCH_SLOT_TILE => format!("http://{}:{}/slot_tile", self.host, self.port),
-            ProcessType::REQUEST_TILES => format!("http://{}:{}/tiles", self.host, self.port),
+            ProcessType::FETCH_TILES => format!("http://{}:{}/tiles", self.host, self.port),
             ProcessType::FETCH_SUMMARY_TILE => {
                 format!("http://{}:{}/summary", self.host, self.port)
-            }
-            ProcessType::FETCH_SLOT_META_TILES => {
-                format!("http://{}:{}/slot_meta_tiles", self.host, self.port)
-            }
-            ProcessType::FETCH_SLOT_TILES => {
-                format!("http://{}:{}/slot_tiles", self.host, self.port)
-            }
-            ProcessType::FETCH_SUMMARY_TILES => {
-                format!("http://{}:{}/summaries", self.host, self.port)
             }
             ProcessType::INTERVAL => format!("http://{}:{}/interval", self.host, self.port),
         };
@@ -183,7 +139,7 @@ impl HTTPQueueDataSource {
                 tile_id: work.tile_id.unwrap(),
             })
             .unwrap(),
-            ProcessType::REQUEST_TILES => serde_json::to_string(&FetchTilesRequest {
+            ProcessType::FETCH_TILES => serde_json::to_string(&FetchTilesRequest {
                 entry_id: work.entry_id.clone(),
                 interval: work.interval.unwrap(),
             })
@@ -191,21 +147,6 @@ impl HTTPQueueDataSource {
             ProcessType::FETCH_SUMMARY_TILE => serde_json::to_string(&FetchRequest {
                 entry_id: work.entry_id.clone(),
                 tile_id: work.tile_id.unwrap(),
-            })
-            .unwrap(),
-            ProcessType::FETCH_SLOT_META_TILES => serde_json::to_string(&FetchMultipleRequest {
-                entry_id: work.entry_id.clone(),
-                tile_ids: work.tile_ids.unwrap(),
-            })
-            .unwrap(),
-            ProcessType::FETCH_SLOT_TILES => serde_json::to_string(&FetchMultipleRequest {
-                entry_id: work.entry_id.clone(),
-                tile_ids: work.tile_ids.unwrap(),
-            })
-            .unwrap(),
-            ProcessType::FETCH_SUMMARY_TILES => serde_json::to_string(&FetchMultipleRequest {
-                entry_id: work.entry_id.clone(),
-                tile_ids: work.tile_ids.unwrap(),
             })
             .unwrap(),
             ProcessType::INTERVAL => "".to_string(),
@@ -219,7 +160,6 @@ impl HTTPQueueDataSource {
         };
         // request.body = body.into();
 
-        log("YEEHAW");
         log(&url.clone());
         let queue = self.queue.clone();
         ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
@@ -264,183 +204,99 @@ impl DataSource for HTTPQueueDataSource {
     fn init(&mut self) -> crate::data::Initializer {
         self.initializer.clone()
     }
-    fn request_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        request_interval: Interval,
-    ) -> Option<Vec<TileID>> {
+    fn fetch_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) {
+        self.process_queue();
+        // queue work
+        let work = Work {
+            entry_id: entry_id.clone(),
+            tile_id: None,
+            tile_ids: None,
+            interval: Some(request_interval),
+            data: "".to_string(),
+            process_type: ProcessType::FETCH_TILES,
+        };
+        self.queue_work(work);
+    }
+
+    fn get_tiles(&mut self, entry_id: &EntryID) -> Vec<TileID> {
+        self.process_queue();
+        if let Some(tiles) = self.fetch_tiles_cache.get(&(entry_id.clone())) {
+            return tiles.to_vec();
+        } else {
+            return vec![];
+        }
+    }
+
+    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) {
+        // queue work
+        self.process_queue();
+        let work = Work {
+            entry_id: entry_id.clone(),
+            tile_id: Some(tile_id),
+            interval: None,
+            tile_ids: None,
+            data: "".to_string(),
+            process_type: ProcessType::FETCH_SUMMARY_TILE,
+        };
+        self.queue_work(work);
+    }
+
+    fn get_summary_tiles(&mut self, entry_id: &EntryID) -> Vec<SummaryTile> {
         self.process_queue();
 
-        // check cache for  entry_id, request_interval
-        if let Some(tiles) = self
-            .request_tiles_cache
-            .get(&(entry_id.clone(), request_interval))
-        {
-            return Some(tiles.clone());
+        if let Some(tiles) = self.fetch_summary_tiles_cache.get(&(entry_id.clone())) {
+            return tiles.to_vec();
         } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: None,
-                tile_ids: None,
-                interval: Some(request_interval),
-                data: "".to_string(),
-                process_type: ProcessType::REQUEST_TILES,
-            };
-            self.queue_work(work);
-            return None;
+            return vec![];
         }
+    }
+    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) {
+        self.process_queue();
+        // queue work
+        let work = Work {
+            entry_id: entry_id.clone(),
+            tile_id: Some(tile_id),
+            interval: None,
+            tile_ids: None,
+            data: "".to_string(),
+            process_type: ProcessType::FETCH_SLOT_TILE,
+        };
+        self.queue_work(work);
     }
 
-    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SummaryTile> {
-        // check cache
-        if let Some(st) = self
-            .fetch_summary_tile_cache
-            .get(&(entry_id.clone(), tile_id))
-        {
-            return Some(st.clone());
-        } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: Some(tile_id),
-                interval: None,
-                tile_ids: None,
-                data: "".to_string(),
-                process_type: ProcessType::FETCH_SUMMARY_TILE,
-            };
-            self.queue_work(work);
-            return None;
-        }
-    }
-
-    fn fetch_summary_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        tile_ids: Vec<TileID>,
-    ) -> Option<Vec<SummaryTile>> {
-        console_log!("fetch_summary_tiles with entry id");
-        console_log!("{:?}", entry_id);
-        // check cache
-        if let Some(st) = self
-            .fetch_summary_tiles_cache
-            .get(&(entry_id.clone(), tile_ids.clone()))
-        {
-            return Some(st.clone());
-        } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: None,
-                tile_ids: Some(tile_ids),
-                interval: None,
-                data: "".to_string(),
-                process_type: ProcessType::FETCH_SUMMARY_TILES,
-            };
-            console_log!("adding summary work to queue {:?}", work);
-            self.queue_work(work);
-            return None;
-        }
-    }
-    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> Option<SlotTile> {
+    fn get_slot_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotTile> {
         self.process_queue();
 
-        // check cache
-        if let Some(st) = self.fetch_slot_tile_cache.get(&(entry_id.clone(), tile_id)) {
-            return Some(st.clone());
+        if let Some(tiles) = self.fetch_slot_tiles_cache.get(&(entry_id.clone())) {
+            return tiles.to_vec();
         } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: Some(tile_id),
-                interval: None,
-                tile_ids: None,
-                data: "".to_string(),
-                process_type: ProcessType::FETCH_SLOT_TILE,
-            };
-            self.queue_work(work);
-            return None;
+            return vec![];
         }
     }
 
-    fn fetch_slot_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        tile_ids: Vec<TileID>,
-    ) -> Option<Vec<SlotTile>> {
+    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) {
         self.process_queue();
-
         // check cache
-        if let Some(st) = self
-            .fetch_slot_tiles_cache
-            .get(&(entry_id.clone(), tile_ids.clone()))
-        {
-            return Some(st.clone());
-        } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: None,
-                tile_ids: Some(tile_ids.clone()),
-                interval: None,
-                data: "".to_string(),
-                process_type: ProcessType::FETCH_SLOT_TILES,
-            };
-            self.queue_work(work);
-            return None;
-        }
+
+        // queue work
+        let work = Work {
+            entry_id: entry_id.clone(),
+            tile_id: Some(tile_id),
+            tile_ids: None,
+            interval: None,
+            data: "".to_string(),
+            process_type: ProcessType::FETCH_SLOT_META_TILE,
+        };
+        self.queue_work(work);
     }
 
-    fn fetch_slot_meta_tile(
-        &mut self,
-        entry_id: &EntryID,
-        tile_id: TileID,
-    ) -> Option<SlotMetaTile> {
+    fn get_slot_meta_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotMetaTile> {
         self.process_queue();
-        // check cache
-        if let Some(smt) = self
-            .fetch_slot_meta_tile_cache
-            .get(&(entry_id.clone(), tile_id))
-        {
-            return Some(smt.clone());
+
+        if let Some(tiles) = self.fetch_slot_meta_tiles_cache.get(&(entry_id.clone())) {
+            return tiles.to_vec();
         } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: Some(tile_id),
-                tile_ids: None,
-                interval: None,
-                data: "".to_string(),
-                process_type: ProcessType::FETCH_SLOT_META_TILE,
-            };
-            self.queue_work(work);
-            return None;
-        }
-    }
-    fn fetch_slot_meta_tiles(
-        &mut self,
-        entry_id: &EntryID,
-        tile_ids: Vec<TileID>,
-    ) -> Option<Vec<SlotMetaTile>> {
-        self.process_queue();
-        // check cache
-        if let Some(smt) = self
-            .fetch_slot_meta_tiles_cache
-            .get(&(entry_id.clone(), tile_ids.clone()))
-        {
-            return Some(smt.clone());
-        } else {
-            // queue work
-            let work = Work {
-                entry_id: entry_id.clone(),
-                tile_id: None,
-                tile_ids: Some(tile_ids.clone()),
-                interval: None,
-                data: "".to_string(),
-                process_type: ProcessType::FETCH_SLOT_META_TILES,
-            };
-            self.queue_work(work);
-            return None;
+            return vec![];
         }
     }
 }

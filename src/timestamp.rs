@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize, Hash)]
 pub struct Timestamp(pub i64 /* ns */);
 
 impl fmt::Display for Timestamp {
@@ -35,7 +35,7 @@ impl fmt::Display for Timestamp {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize, Hash)]
 pub struct Interval {
     pub start: Timestamp,
     pub stop: Timestamp, // exclusive

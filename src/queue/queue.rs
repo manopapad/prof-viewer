@@ -1,6 +1,5 @@
 // use std::sync::{Arc, Mutex};
 
-use egui::Window;
 
 use crate::{
     data::{EntryID, TileID},
@@ -10,12 +9,9 @@ use crate::{
 #[derive(Clone, Debug)]
 pub enum ProcessType {
     FETCH_SLOT_META_TILE,
-    FETCH_SLOT_META_TILES,
     FETCH_SLOT_TILE,
-    FETCH_SLOT_TILES,
-    REQUEST_TILES,
+    FETCH_TILES,
     FETCH_SUMMARY_TILE,
-    FETCH_SUMMARY_TILES,
     INTERVAL,
 }
 

@@ -1,12 +1,16 @@
 use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::data::{
     DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
 };
+use crate::queue::stamp::Stamp;
+
 use crate::logging::{console_log, log};
 use crate::search::{SelectedItem, SelectedState};
 use crate::timestamp::Interval;
@@ -130,6 +134,9 @@ struct Context {
     toggle_dark_mode: bool,
 
     debug: bool,
+
+    #[serde(skip)]
+    passport: BTreeSet<Stamp>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -214,27 +221,46 @@ impl Summary {
         self.utilization.clear();
     }
 
-    fn inflate(&mut self, config: &mut Config, cx: &Context) {
+    fn inflate(&mut self, config: &mut Config, cx: &mut Context) {
         self.is_inflating = true;
-        console_log!("inflating summary {:?}", self.entry_id);
-        console_log!("config interval: {:?}", config.interval);
-        console_log!("view interval: {:?}", cx.view_interval);
         let interval = config.interval.intersection(cx.view_interval);
-        let t_opt = config.data_source.request_tiles(&self.entry_id, interval);
-        if let Some(tiles) = t_opt {
-            console_log!("got tiles: {:?}", tiles);
-            let s_tiles_opt = config
-                .data_source
-                .fetch_summary_tiles(&self.entry_id, tiles.clone());
 
-            if let Some(s_tiles) = s_tiles_opt {
-                console_log!("got more tiles: {:?}", tiles.clone());
+        // make unique stamp for this call
+        let mut s = DefaultHasher::new();
+        self.entry_id.hash(&mut s);
+        interval.hash(&mut s);
+        "fetch_tiles".hash(&mut s); // temp hack to differentiate function calls in passport
+                                              // passport may need to be Entry specific instea of global
+        let str_hash = format!("{:x}", s.finish());
 
-                for s_tile in s_tiles {
-                    self.utilization.extend(s_tile.utilization);
-                }
-                self.is_inflating = false;
+        if !cx.passport.contains(&str_hash) {
+            cx.passport.insert(str_hash.clone());
+            config.data_source.fetch_tiles(&self.entry_id, interval);
+        }
+
+        let tiles = config.data_source.get_tiles(&self.entry_id);
+        
+        // filter tiles that are only in our request interval
+        let tiles = tiles
+            .into_iter()
+            .filter(|t| t.0.overlaps(interval))
+            .collect::<Vec<_>>();
+
+        for tile in tiles {
+            // create stamp for this tile
+            let mut s = DefaultHasher::new();
+            self.entry_id.hash(&mut s);
+            tile.hash(&mut s);
+            "summary_tile".hash(&mut s); // temp hack to differentiate function calls in passport
+            let str_hash = format!("{:x}", s.finish());
+            if !cx.passport.contains(&str_hash) {
+                cx.passport.insert(str_hash.clone());
+                config.data_source.fetch_summary_tile(&self.entry_id, tile)
             }
+        }
+        // self.utilization.clear(); // ?? needed?
+        for summary_tile in config.data_source.get_summary_tiles(&self.entry_id) {
+            self.utilization.extend(summary_tile.utilization);
         }
     }
 }
@@ -395,36 +421,74 @@ impl Slot {
         self.tile_metas.clear();
     }
 
-    fn inflate(&mut self, config: &mut Config, cx: &Context) {
+    fn inflate(&mut self, config: &mut Config, cx: &mut Context) {
         self.is_inflating = true;
-
-        console_log!("config interval: {:?}", config.interval);
-        console_log!("view interval: {:?}", cx.view_interval);
         let interval = config.interval.intersection(cx.view_interval);
-        let t_opt = config.data_source.request_tiles(&self.entry_id, interval);
-        if let Some(tiles) = t_opt {
-            let s_tiles_opt = config.data_source.fetch_slot_tiles(&self.entry_id, tiles);
 
-            if let Some(s_tiles) = s_tiles_opt {
-                for s_tile in s_tiles {
-                    self.tiles.push(s_tile);
-                }
-                self.is_inflating = false;
+        // make unique stamp for this call
+        let mut s = DefaultHasher::new();
+        self.entry_id.hash(&mut s);
+        interval.hash(&mut s);
+        "fetch_tiles".hash(&mut s); // temp hack to differentiate function calls in passport
+                                              // passport may need to be Entry specific instea of global
+        let str_hash: String = format!("{:x}", s.finish());
+
+        if !cx.passport.contains(&str_hash) {
+            cx.passport.insert(str_hash.clone());
+            config.data_source.fetch_tiles(&self.entry_id, interval);
+        }
+
+        let tiles = config.data_source.get_tiles(&self.entry_id);
+        
+        // filter tiles that are only in our request interval
+        let tiles: Vec<TileID> = tiles
+            .into_iter()
+            .filter(|t| t.0.overlaps(interval))
+            .collect::<Vec<_>>();
+
+        for tile in tiles {
+            // create stamp for this tile
+            let mut s: DefaultHasher = DefaultHasher::new();
+            self.entry_id.hash(&mut s);
+            tile.hash(&mut s);
+            "slot_tile".hash(&mut s); // temp hack to differentiate function calls in passport
+            let str_hash = format!("{:x}", s.finish());
+            if !cx.passport.contains(&str_hash) {
+                cx.passport.insert(str_hash.clone());
+                config.data_source.fetch_slot_tile(&self.entry_id, tile)
             }
+        }
+        // self.tiles.clear(); // ?? needed?
+        for slot_tile in config.data_source.get_slot_tiles(&self.entry_id) {
+            self.tiles.push(slot_tile);
         }
     }
 
-    fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config) -> Option<SlotMetaTile> {
+    fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config, cx: &mut Context) -> Option<SlotMetaTile> {
         let pot_entry = self.tile_metas.get(&tile_id);
         if let Some(entry) = pot_entry {
             return Some(entry.clone());
         } else {
-            let tile_opt = config
-                .data_source
-                .fetch_slot_meta_tile(&self.entry_id, tile_id);
-            if let Some(tile) = tile_opt.clone() {
-                self.tile_metas.insert(tile_id, tile);
-                tile_opt.clone()
+            // create stamp
+            let mut s = DefaultHasher::new();
+            tile_id.hash(&mut s);
+            "fetch_meta_tile".hash(&mut s);
+            let stamp = format!("{:x}", s.finish());
+            if(!cx.passport.contains(&stamp)) {
+                config.data_source.fetch_slot_meta_tile(&self.entry_id, tile_id);
+                cx.passport.insert(stamp);
+            }
+
+            // filter out the meta tiles that are not for this tile_id
+
+            let mut meta_tiles = config.data_source.get_slot_meta_tiles(&self.entry_id).into_iter().filter(|meta_tile| {
+                meta_tile.tile_id == tile_id
+            }).collect::<Vec<_>>();
+
+            if meta_tiles.len() > 0 {
+                let meta_tile = meta_tiles.pop().unwrap();
+                self.tile_metas.insert(tile_id, meta_tile.clone());
+                Some(meta_tile)
             } else {
                 None
             }
@@ -585,7 +649,7 @@ impl Slot {
         }
 
         if let Some((row, item_idx, item_rect, tile_id)) = interact_item {
-            if let Some(tile_meta) = self.fetch_meta_tile(tile_id, config) {
+            if let Some(tile_meta) = self.fetch_meta_tile(tile_id, config, cx) {
                 let item_meta = &tile_meta.items[row][item_idx];
                 ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
                     ui.label(&item_meta.title);
