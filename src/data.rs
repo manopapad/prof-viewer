@@ -83,39 +83,107 @@ pub struct TileID(pub Interval);
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SummaryTile {
+    pub entry_id: EntryID,
     pub tile_id: TileID,
     pub utilization: Vec<UtilPoint>,
 }
 
+impl PartialEq for SummaryTile {
+    fn eq(&self, other: &Self) -> bool {
+        self.entry_id == other.entry_id && self.tile_id == other.tile_id
+    }
+}
+
+impl Eq for SummaryTile {
+
+}
+
+impl PartialOrd for SummaryTile {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SummaryTile {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entry_id
+            .cmp(&other.entry_id)
+            .then(self.tile_id.cmp(&other.tile_id))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SlotTile {
+    pub entry_id: EntryID,
     pub tile_id: TileID,
     pub items: Vec<Vec<Item>>, // row -> [item]
 }
 
+impl PartialEq for SlotTile {
+    fn eq(&self, other: &Self) -> bool {
+        self.entry_id == other.entry_id && self.tile_id == other.tile_id
+    }
+}
+
+impl Eq for SlotTile {
+
+}
+
+impl PartialOrd for SlotTile {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SlotTile {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entry_id
+            .cmp(&other.entry_id)
+            .then(self.tile_id.cmp(&other.tile_id))
+    }
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SlotMetaTile {
+    pub entry_id: EntryID,
     pub tile_id: TileID,
     pub items: Vec<Vec<ItemMeta>>, // row -> [item]
+}
+
+impl PartialEq for SlotMetaTile {
+    fn eq(&self, other: &Self) -> bool {
+        self.entry_id == other.entry_id && self.tile_id == other.tile_id
+    }
+}
+
+
+impl Eq for SlotMetaTile {
+    
+}
+
+impl PartialOrd for SlotMetaTile {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for SlotMetaTile {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.entry_id
+            .cmp(&other.entry_id)
+            .then(self.tile_id.cmp(&other.tile_id))
+    }
 }
 
 pub trait DataSource {
 
     fn init(&mut self) -> Initializer;
     fn interval(&mut self) -> Interval;
-    fn fetch_info(&mut self) -> EntryInfo;
-
-    fn fetch_tiles(&mut self, entry_id: &EntryID, request_interval: Interval);
-    fn get_tiles(&mut self, entry_id: &EntryID) -> Vec<TileID>;
-
-    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID);
-    fn get_summary_tiles(&mut self, entry_id: &EntryID) -> Vec<SummaryTile>;
-
-    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID);
-    fn get_slot_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotTile>;
-
-    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID);
-    fn get_slot_meta_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotMetaTile>;
+    fn fetch_info(&mut self) -> &EntryInfo;
+    fn request_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) -> Vec<TileID>;
+    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SummaryTile;
+    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotTile;
+    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) -> SlotMetaTile;
 }
 
 impl EntryID {

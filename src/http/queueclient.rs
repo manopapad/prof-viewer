@@ -10,6 +10,7 @@ use crate::{
     data::{
         DataSource, EntryID, EntryInfo, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID,
     },
+    deferred_data::DeferredDataSource,
     logging::*,
     queue::queue::{ProcessType, Work},
     timestamp::Interval,
@@ -27,9 +28,9 @@ pub struct HTTPQueueDataSource {
     pub initializer: Initializer,
     pub interval: Interval,
     fetch_tiles_cache: BTreeMap<EntryID, Vec<TileID>>,
-    fetch_summary_tiles_cache: BTreeMap<EntryID, Vec<SummaryTile>>,
-    fetch_slot_tiles_cache: BTreeMap<EntryID, Vec<SlotTile>>,
-    fetch_slot_meta_tiles_cache: BTreeMap<EntryID, Vec<SlotMetaTile>>,
+    fetch_summary_tiles_cache: Vec<SummaryTile>,
+    fetch_slot_tiles_cache: Vec<SlotTile>,
+    fetch_slot_meta_tiles_cache: Vec<SlotMetaTile>,
 }
 
 impl HTTPQueueDataSource {
@@ -55,15 +56,15 @@ impl HTTPQueueDataSource {
             initializer: initializer.clone(),
             interval: Interval::default(),
             fetch_tiles_cache: BTreeMap::new(),
-            fetch_summary_tiles_cache: BTreeMap::new(),
-            fetch_slot_meta_tiles_cache: BTreeMap::new(),
-            fetch_slot_tiles_cache: BTreeMap::new(),
+            fetch_summary_tiles_cache: Vec::new(),
+            fetch_slot_meta_tiles_cache: Vec::new(),
+            fetch_slot_tiles_cache: Vec::new(),
         }
     }
 
     // empty queue and add results to respective caches
     fn process_queue(&mut self) {
-        log("process_queue");
+        // log("process_queue");
         let mut q = self.queue.lock().unwrap();
 
         for work in q.iter() {
@@ -73,27 +74,29 @@ impl HTTPQueueDataSource {
                     let smt = serde_json::from_str::<SlotMetaTile>(&work.data).unwrap();
                     // add to cache or create new vector
 
-                    self.fetch_slot_meta_tiles_cache.entry(work.entry_id.clone()).or_insert(vec![smt.clone()]).push(smt.clone());
+                    self.fetch_slot_meta_tiles_cache.push(smt.clone());
                 }
                 ProcessType::FETCH_SLOT_TILE => {
                     // deserialize work.data into SlotTile
                     let st = serde_json::from_str::<SlotTile>(&work.data).unwrap();
                     // add to cache
-                    self.fetch_slot_tiles_cache.entry(work.entry_id.clone()).or_insert(vec![st.clone()]).push(st.clone());
-
+                    self.fetch_slot_tiles_cache.push(st.clone());
                 }
 
                 ProcessType::FETCH_TILES => {
                     // deserialize work.data into Vec<TileID>
                     let tiles = serde_json::from_str::<Vec<TileID>>(&work.data).unwrap();
                     // add to cache
-                    self.fetch_tiles_cache.entry(work.entry_id.clone()).or_insert(tiles.clone()).extend(tiles.clone());
+                    self.fetch_tiles_cache
+                        .entry(work.entry_id.clone())
+                        .or_insert(tiles.clone())
+                        .extend(tiles.clone());
                 }
                 ProcessType::FETCH_SUMMARY_TILE => {
                     // deserialize work.data into SummaryTile
                     let st = serde_json::from_str::<SummaryTile>(&work.data).unwrap();
                     // add to cache
-                    self.fetch_summary_tiles_cache.entry(work.entry_id.clone()).or_insert(vec![st.clone()]).push(st.clone());
+                    self.fetch_summary_tiles_cache.push(st.clone());
                 }
                 ProcessType::INTERVAL => {
                     // deserialize work.data into Interval
@@ -114,7 +117,7 @@ impl HTTPQueueDataSource {
     }
 
     fn queue_work(&mut self, work: Work) {
-        log("queue_work");
+        // log("queue_work");
         let _work = work.clone();
         let url = match work.process_type {
             ProcessType::FETCH_SLOT_META_TILE => {
@@ -123,7 +126,7 @@ impl HTTPQueueDataSource {
             ProcessType::FETCH_SLOT_TILE => format!("http://{}:{}/slot_tile", self.host, self.port),
             ProcessType::FETCH_TILES => format!("http://{}:{}/tiles", self.host, self.port),
             ProcessType::FETCH_SUMMARY_TILE => {
-                format!("http://{}:{}/summary", self.host, self.port)
+                format!("http://{}:{}/summary_tile", self.host, self.port)
             }
             ProcessType::INTERVAL => format!("http://{}:{}/interval", self.host, self.port),
         };
@@ -160,7 +163,7 @@ impl HTTPQueueDataSource {
         };
         // request.body = body.into();
 
-        log(&url.clone());
+        // log(&url.clone());
         let queue = self.queue.clone();
         ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
             // deserialize response into a vector of TileIDs
@@ -174,16 +177,15 @@ impl HTTPQueueDataSource {
                 process_type: work.process_type,
             };
 
-            console_log!("ASYNC: pushing new work to queue: {:?}", work);
+            // console_log!("ASYNC: pushing new work to queue: {:?}", work);
             queue.lock().unwrap().push(work);
         });
     }
 }
 
-impl DataSource for HTTPQueueDataSource {
+impl DeferredDataSource for HTTPQueueDataSource {
     fn interval(&mut self) -> Interval {
         self.process_queue();
-        console_log!("TESTINGTESTING");
         let work = Work {
             entry_id: EntryID::root(),
             tile_id: None,
@@ -204,7 +206,7 @@ impl DataSource for HTTPQueueDataSource {
     fn init(&mut self) -> crate::data::Initializer {
         self.initializer.clone()
     }
-    fn fetch_tiles(&mut self, entry_id: &EntryID, request_interval: Interval) {
+    fn fetch_tiles(&mut self, entry_id: EntryID, request_interval: Interval) {
         self.process_queue();
         // queue work
         let work = Work {
@@ -218,7 +220,7 @@ impl DataSource for HTTPQueueDataSource {
         self.queue_work(work);
     }
 
-    fn get_tiles(&mut self, entry_id: &EntryID) -> Vec<TileID> {
+    fn get_tiles(&mut self, entry_id: EntryID) -> Vec<TileID> {
         self.process_queue();
         if let Some(tiles) = self.fetch_tiles_cache.get(&(entry_id.clone())) {
             return tiles.to_vec();
@@ -227,7 +229,7 @@ impl DataSource for HTTPQueueDataSource {
         }
     }
 
-    fn fetch_summary_tile(&mut self, entry_id: &EntryID, tile_id: TileID) {
+    fn fetch_summary_tile(&mut self, entry_id: EntryID, tile_id: TileID) {
         // queue work
         self.process_queue();
         let work = Work {
@@ -241,16 +243,14 @@ impl DataSource for HTTPQueueDataSource {
         self.queue_work(work);
     }
 
-    fn get_summary_tiles(&mut self, entry_id: &EntryID) -> Vec<SummaryTile> {
+    fn get_summary_tiles(&mut self) -> Vec<SummaryTile> {
         self.process_queue();
 
-        if let Some(tiles) = self.fetch_summary_tiles_cache.get(&(entry_id.clone())) {
-            return tiles.to_vec();
-        } else {
-            return vec![];
-        }
+        let tiles = self.fetch_summary_tiles_cache.clone();
+        self.fetch_summary_tiles_cache.clear();
+        tiles
     }
-    fn fetch_slot_tile(&mut self, entry_id: &EntryID, tile_id: TileID) {
+    fn fetch_slot_tile(&mut self, entry_id: EntryID, tile_id: TileID) {
         self.process_queue();
         // queue work
         let work = Work {
@@ -264,17 +264,15 @@ impl DataSource for HTTPQueueDataSource {
         self.queue_work(work);
     }
 
-    fn get_slot_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotTile> {
+    fn get_slot_tile(&mut self) -> Vec<SlotTile> {
         self.process_queue();
 
-        if let Some(tiles) = self.fetch_slot_tiles_cache.get(&(entry_id.clone())) {
-            return tiles.to_vec();
-        } else {
-            return vec![];
-        }
+        let tiles = self.fetch_slot_tiles_cache.clone();
+        self.fetch_slot_tiles_cache.clear();
+        tiles
     }
 
-    fn fetch_slot_meta_tile(&mut self, entry_id: &EntryID, tile_id: TileID) {
+    fn fetch_slot_meta_tile(&mut self, entry_id: EntryID, tile_id: TileID) {
         self.process_queue();
         // check cache
 
@@ -290,13 +288,11 @@ impl DataSource for HTTPQueueDataSource {
         self.queue_work(work);
     }
 
-    fn get_slot_meta_tiles(&mut self, entry_id: &EntryID) -> Vec<SlotMetaTile> {
+    fn get_slot_meta_tile(&mut self) -> Vec<SlotMetaTile> {
         self.process_queue();
 
-        if let Some(tiles) = self.fetch_slot_meta_tiles_cache.get(&(entry_id.clone())) {
-            return tiles.to_vec();
-        } else {
-            return vec![];
-        }
+        let tiles = self.fetch_slot_meta_tiles_cache.clone();
+        self.fetch_slot_meta_tiles_cache.clear();
+        tiles
     }
 }

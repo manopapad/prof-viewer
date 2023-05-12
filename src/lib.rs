@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod data;
+pub mod deferred_data;
 pub mod timestamp;
 pub mod search;
 pub mod http;

@@ -62,7 +62,7 @@ impl DataSourceHTTPServer {
         let to_ret = source.interval();
         Ok(web::Json(to_ret))
     }
-
+    
     async fn fetch_tiles(
         info: web::Json<FetchTilesRequest>,
         data: web::Data<AppState>,
@@ -72,7 +72,7 @@ impl DataSourceHTTPServer {
 
         let entry_id = &info.entry_id;
         let request_interval = info.interval;
-        let to_ret = source.fetch_tiles(entry_id, request_interval);
+        let to_ret = source.request_tiles(entry_id, request_interval);
         Ok(web::Json(to_ret))
     }
 

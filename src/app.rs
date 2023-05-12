@@ -1,17 +1,18 @@
+use crate::deferred_data::DeferredDataSource;
 use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
+use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
+use std::hash::{Hash, Hasher};
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, TileID, UtilPoint,
+    DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, SummaryTile, TileID, UtilPoint,
 };
 use crate::queue::stamp::Stamp;
 
-use crate::logging::{console_log, log};
+// use crate::logging::{ console_log, log};
 use crate::search::{SelectedItem, SelectedState};
 use crate::timestamp::Interval;
 
@@ -51,6 +52,7 @@ const MAX_SEARCHED_ITEMS: u64 = 100000;
 struct Summary {
     entry_id: EntryID,
     color: Color32,
+    sum_tiles: BTreeMap<TileID, Option<SummaryTile>>,
     utilization: Vec<UtilPoint>,
     last_view_interval: Option<Interval>,
     is_inflating: bool,
@@ -62,8 +64,9 @@ struct Slot {
     long_name: String,
     expanded: bool,
     max_rows: u64,
+    slot_tiles: BTreeMap<TileID, Option<SlotTile>>,
     tiles: Vec<SlotTile>,
-    tile_metas: BTreeMap<TileID, SlotMetaTile>,
+    tile_metas: BTreeMap<TileID, Option<SlotMetaTile>>,
     last_view_interval: Option<Interval>,
     is_inflating: bool,
 }
@@ -86,7 +89,7 @@ struct Config {
     // This is just for the local profile
     interval: Interval,
 
-    data_source: Box<dyn DataSource>,
+    data_source: Box<dyn DeferredDataSource>,
 }
 
 struct Window {
@@ -136,7 +139,7 @@ struct Context {
     debug: bool,
 
     #[serde(skip)]
-    passport: BTreeSet<Stamp>,
+    tiles: Vec<TileID>,
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -146,7 +149,7 @@ struct ProfApp {
     windows: Vec<Window>,
 
     #[serde(skip)]
-    extra_source: Option<Box<dyn DataSource>>,
+    extra_source: Option<Box<dyn DeferredDataSource>>,
 
     cx: Context,
 
@@ -219,61 +222,37 @@ trait Entry {
 impl Summary {
     fn clear(&mut self) {
         self.utilization.clear();
+        self.sum_tiles.clear();
     }
 
     fn inflate(&mut self, config: &mut Config, cx: &mut Context) {
         self.is_inflating = true;
-        let interval = config.interval.intersection(cx.view_interval);
+        let interval = TileID(config.interval.intersection(cx.view_interval));
+        // HACK: since only one tile is ever made
 
-        // make unique stamp for this call
-        let mut s = DefaultHasher::new();
-        self.entry_id.hash(&mut s);
-        interval.hash(&mut s);
-        "fetch_tiles".hash(&mut s); // temp hack to differentiate function calls in passport
-                                              // passport may need to be Entry specific instea of global
-        let str_hash = format!("{:x}", s.finish());
-
-        if !cx.passport.contains(&str_hash) {
-            cx.passport.insert(str_hash.clone());
-            config.data_source.fetch_tiles(&self.entry_id, interval);
-        }
-
-        let tiles = config.data_source.get_tiles(&self.entry_id);
-        
-        // filter tiles that are only in our request interval
-        let tiles = tiles
-            .into_iter()
-            .filter(|t| t.0.overlaps(interval))
-            .collect::<Vec<_>>();
-
-        for tile in tiles {
-            // create stamp for this tile
-            let mut s = DefaultHasher::new();
-            self.entry_id.hash(&mut s);
-            tile.hash(&mut s);
-            "summary_tile".hash(&mut s); // temp hack to differentiate function calls in passport
-            let str_hash = format!("{:x}", s.finish());
-            if !cx.passport.contains(&str_hash) {
-                cx.passport.insert(str_hash.clone());
-                config.data_source.fetch_summary_tile(&self.entry_id, tile)
-            }
-        }
-        // self.utilization.clear(); // ?? needed?
-        for summary_tile in config.data_source.get_summary_tiles(&self.entry_id) {
-            self.utilization.extend(summary_tile.utilization);
+        if !self.sum_tiles.contains_key(&interval) {
+            config
+                .data_source
+                .fetch_summary_tile(self.entry_id.clone(), interval);
+            self.sum_tiles.insert(interval, None);
+            return;
+        } else if let Some(sum_tile) = self.sum_tiles.get(&interval).unwrap() {
+            self.utilization.extend(sum_tile.utilization.clone());
+            self.is_inflating = false;
         }
     }
 }
 
 impl Entry for Summary {
     fn new(info: &EntryInfo, entry_id: EntryID) -> Self {
-        log("test");
-        console_log!("Summary::new({:?}, {:?}", info, entry_id);
+        // log("test");
+        // console_log!("Summary::new({:?}, {:?}", info, entry_id);
 
         if let EntryInfo::Summary { color } = info {
             Self {
                 entry_id,
                 color: *color,
+                sum_tiles: BTreeMap::new(),
                 utilization: Vec::new(),
                 last_view_interval: None,
                 is_inflating: false,
@@ -419,79 +398,40 @@ impl Slot {
     fn clear(&mut self) {
         self.tiles.clear();
         self.tile_metas.clear();
+        self.slot_tiles.clear();
     }
 
     fn inflate(&mut self, config: &mut Config, cx: &mut Context) {
         self.is_inflating = true;
-        let interval = config.interval.intersection(cx.view_interval);
+        let interval = TileID(config.interval.intersection(cx.view_interval));
+        // HACK: since only one tile is ever made
 
-        // make unique stamp for this call
-        let mut s = DefaultHasher::new();
-        self.entry_id.hash(&mut s);
-        interval.hash(&mut s);
-        "fetch_tiles".hash(&mut s); // temp hack to differentiate function calls in passport
-                                              // passport may need to be Entry specific instea of global
-        let str_hash: String = format!("{:x}", s.finish());
-
-        if !cx.passport.contains(&str_hash) {
-            cx.passport.insert(str_hash.clone());
-            config.data_source.fetch_tiles(&self.entry_id, interval);
-        }
-
-        let tiles = config.data_source.get_tiles(&self.entry_id);
-        
-        // filter tiles that are only in our request interval
-        let tiles: Vec<TileID> = tiles
-            .into_iter()
-            .filter(|t| t.0.overlaps(interval))
-            .collect::<Vec<_>>();
-
-        for tile in tiles {
-            // create stamp for this tile
-            let mut s: DefaultHasher = DefaultHasher::new();
-            self.entry_id.hash(&mut s);
-            tile.hash(&mut s);
-            "slot_tile".hash(&mut s); // temp hack to differentiate function calls in passport
-            let str_hash = format!("{:x}", s.finish());
-            if !cx.passport.contains(&str_hash) {
-                cx.passport.insert(str_hash.clone());
-                config.data_source.fetch_slot_tile(&self.entry_id, tile)
-            }
-        }
-        // self.tiles.clear(); // ?? needed?
-        for slot_tile in config.data_source.get_slot_tiles(&self.entry_id) {
-            self.tiles.push(slot_tile);
+        if !self.slot_tiles.contains_key(&interval) {
+            config
+                .data_source
+                .fetch_slot_tile(self.entry_id.clone(), interval);
+            self.slot_tiles.insert(interval, None);
+            return;
+        } else if let Some(slot_tile) = self.slot_tiles.get(&interval).unwrap() {
+            self.tiles.push(slot_tile.clone());
+            self.is_inflating = false;
         }
     }
 
-    fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config, cx: &mut Context) -> Option<SlotMetaTile> {
-        let pot_entry = self.tile_metas.get(&tile_id);
-        if let Some(entry) = pot_entry {
-            return Some(entry.clone());
+    fn fetch_meta_tile(
+        &mut self,
+        tile_id: TileID,
+        config: &mut Config,
+        cx: &mut Context,
+    ) -> Option<SlotMetaTile> {
+        if self.tile_metas.contains_key(&tile_id) {
+            return self.tile_metas.get(&tile_id).unwrap().clone();
         } else {
-            // create stamp
-            let mut s = DefaultHasher::new();
-            tile_id.hash(&mut s);
-            "fetch_meta_tile".hash(&mut s);
-            let stamp = format!("{:x}", s.finish());
-            if(!cx.passport.contains(&stamp)) {
-                config.data_source.fetch_slot_meta_tile(&self.entry_id, tile_id);
-                cx.passport.insert(stamp);
-            }
-
-            // filter out the meta tiles that are not for this tile_id
-
-            let mut meta_tiles = config.data_source.get_slot_meta_tiles(&self.entry_id).into_iter().filter(|meta_tile| {
-                meta_tile.tile_id == tile_id
-            }).collect::<Vec<_>>();
-
-            if meta_tiles.len() > 0 {
-                let meta_tile = meta_tiles.pop().unwrap();
-                self.tile_metas.insert(tile_id, meta_tile.clone());
-                Some(meta_tile)
-            } else {
-                None
-            }
+            config
+                .data_source
+                .fetch_slot_meta_tile(self.entry_id.clone(), tile_id);
+            self.tile_metas.insert(tile_id, None);
+            return None;
         }
     }
 
@@ -509,7 +449,12 @@ impl Slot {
         cx: &mut Context,
     ) -> Option<Pos2> {
         // Hack: can't pass this as an argument because it aliases self.
-        let tile = &self.tiles[tile_index];
+        let tiles = &mut self.tiles;
+
+        if tiles.len() < tile_index + 1 {
+            return hover_pos;
+        }
+        let tile = &tiles[tile_index];
         let tile_id = tile.tile_id;
 
         if !cx.view_interval.overlaps(tile_id.0) && cx.selected_state.selected.is_none() {
@@ -698,6 +643,7 @@ impl Entry for Slot {
                 expanded: true,
                 max_rows: *max_rows,
                 tiles: Vec::new(),
+                slot_tiles: BTreeMap::new(),
                 tile_metas: BTreeMap::new(),
                 last_view_interval: None,
                 is_inflating: false,
@@ -751,7 +697,7 @@ impl Entry for Slot {
                 self.clear();
             }
             self.last_view_interval = Some(cx.view_interval);
-            if self.tiles.is_empty() {
+            if self.tiles.is_empty() || self.is_inflating {
                 self.inflate(config, cx);
             }
 
@@ -848,7 +794,7 @@ impl<S: Entry> Entry for Panel<S> {
             slots,
         } = info
         {
-            console_log!("Creating panel: {:?}", entry_id);
+            // // console_log!("Creating panel: {:?}", entry_id);
             let expanded = entry_id.level() != 2;
             let summary = summary
                 .as_ref()
@@ -955,12 +901,12 @@ impl<S: Entry> Entry for Panel<S> {
 }
 
 impl Config {
-    fn new(mut data_source: Box<dyn DataSource>) -> Self {
+    fn new(mut data_source: Box<dyn DeferredDataSource>) -> Self {
         let max_node = data_source.fetch_info().nodes();
         let interval = data_source.init().interval;
 
-        console_log!("configinterval: {:?}", interval);
-        
+        // console_log!("configinterval: {:?}", interval);
+
         Self {
             min_node: 0,
             max_node,
@@ -971,7 +917,7 @@ impl Config {
 }
 
 impl Window {
-    fn new(data_source: Box<dyn DataSource>, index: u64) -> Self {
+    fn new(data_source: Box<dyn DeferredDataSource>, index: u64) -> Self {
         let mut config = Config::new(data_source);
 
         Self {
@@ -984,9 +930,9 @@ impl Window {
 
     fn content(&mut self, ui: &mut egui::Ui, cx: &mut Context) {
         // reaquire the data source interval
-        cx.view_interval = self.config.data_source.interval();
+        // cx.view_interval = self.config.data_source.interval();
 
-        ui.horizontal(|ui| {
+        ui.horizontal(|ui: &mut egui::Ui| {
             ui.heading(format!("Profile {}", self.index));
             ui.label(cx.view_interval.to_string())
         });
@@ -1133,14 +1079,44 @@ impl Window {
             ProfApp::zoom(cx, cx.total_interval);
         }
     }
+
+    fn find_slot_entry<'a>(&'a mut self, entry_id: &EntryID) -> Option<&'a mut Slot> {
+        for node in &mut self.panel.slots {
+            for node2 in &mut node.slots {
+                for node3 in &mut node2.slots {
+                    if node3.entry_id == entry_id.clone() {
+                        return Some(node3);
+                    }
+                }
+            }
+        }
+
+        return None;
+    }
+
+    fn find_summary_entry<'a>(&'a mut self, entry_id: &EntryID) -> Option<&'a mut Summary> {
+        for node in &mut self.panel.slots {
+            if node.summary.is_some() && node.summary.as_ref().unwrap().entry_id == entry_id.clone() {
+                return node.summary.as_mut();
+            }
+
+            for node2 in &mut node.slots {
+                if node2.summary.is_some() && node2.summary.as_ref().unwrap().entry_id == entry_id.clone() {
+                    return node2.summary.as_mut();
+                }
+            }
+        }
+
+        return None;
+    }
 }
 
 impl ProfApp {
     /// Called once before the first frame.
     pub fn new(
         cc: &eframe::CreationContext<'_>,
-        data_source: Box<dyn DataSource>,
-        extra_source: Option<Box<dyn DataSource>>,
+        data_source: Box<dyn DeferredDataSource>,
+        extra_source: Option<Box<dyn DeferredDataSource>>,
     ) -> Self {
         // This is also where you can customized the look at feel of egui using
         // `cc.egui_ctx.set_visuals` and `cc.egui_ctx.set_fonts`.
@@ -1176,7 +1152,7 @@ impl ProfApp {
     }
 
     fn zoom(cx: &mut Context, interval: Interval) {
-        console_log!("zoom: {:?}", interval);
+        // console_log!("zoom: {:?}", interval);
         if cx.view_interval == interval {
             return;
         }
@@ -1188,6 +1164,9 @@ impl ProfApp {
         cx.zoom_state.levels.push(cx.view_interval);
         cx.zoom_state.index = cx.zoom_state.levels.len() - 1;
         cx.zoom_state.zoom_count = 0;
+
+        // reset tiles
+        cx.tiles = vec![];
     }
 
     fn undo_zoom(cx: &mut Context) {
@@ -1365,7 +1344,49 @@ impl eframe::App for ProfApp {
             ..
         } = self;
 
-        let mut _fps = 0.0;
+        // get any pending data source updates
+
+        for window in windows.iter_mut() {
+            // gather slot tiles
+            let slot_tiles = window.config.data_source.get_slot_tile();
+            for tile in slot_tiles {
+                let entry = window.find_slot_entry(&tile.entry_id);
+
+                if let Some(entry) = entry {
+                    if entry.slot_tiles.contains_key(&tile.tile_id) {
+                        entry.slot_tiles.insert(tile.tile_id, Some(tile));
+                    }
+                }
+            }
+
+            // gather summary tiles
+            let summary_tiles = window.config.data_source.get_summary_tiles();
+            for tile in summary_tiles {
+                let entry = window.find_summary_entry(&tile.entry_id);
+
+                if let Some(entry) = entry {
+                    if entry.sum_tiles.contains_key(&tile.tile_id) {
+                        entry.sum_tiles.insert(tile.tile_id, Some(tile));
+                    }
+                }
+            }
+
+            // gather meta tiles 
+            let meta_tiles = window.config.data_source.get_slot_meta_tile();
+            for tile in meta_tiles {
+                let entry = window.find_slot_entry(&tile.entry_id);
+
+                if let Some(entry) = entry {
+                    if entry.tile_metas.contains_key(&tile.tile_id) {
+                        entry.tile_metas.insert(tile.tile_id, Some(tile));
+                    }
+                }
+            }
+
+            // HACK: for now we dont have to gather tile IDs
+        }
+
+        let mut _fps: f64 = 0.0;
         #[cfg(not(target_arch = "wasm32"))]
         {
             let now = Instant::now();
@@ -1665,9 +1686,10 @@ impl eframe::App for ProfApp {
                         ui.visuals().text_color()
                     };
 
-                    let button =
-                        egui::Button::new(egui::RichText::new("🛠").color(debug_color).size(16.0))
-                            .frame(false);
+                    let button = egui::Button::new(
+                        egui::RichText::new("🛠 Debug").color(debug_color).size(12.0),
+                    )
+                    .frame(true);
                     if ui
                         .add(button)
                         .on_hover_text(format!(
@@ -1828,8 +1850,12 @@ fn get_filtered_entries<'a>(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn start(data_source: Box<dyn DataSource>, extra_source: Option<Box<dyn DataSource>>) {
+pub fn start(
+    data_source: Box<dyn DeferredDataSource>,
+    extra_source: Option<Box<dyn DeferredDataSource>>,
+) {
     // Log to stdout (if you run with `RUST_LOG=debug`).
+
     tracing_subscriber::fmt::init();
 
     let native_options = eframe::NativeOptions::default();
@@ -1842,7 +1868,10 @@ pub fn start(data_source: Box<dyn DataSource>, extra_source: Option<Box<dyn Data
 }
 
 #[cfg(target_arch = "wasm32")]
-pub fn start(data_source: Box<dyn DataSource>, extra_source: Option<Box<dyn DataSource>>) {
+pub fn start(
+    data_source: Box<dyn DeferredDataSource>,
+    extra_source: Option<Box<dyn DeferredDataSource>>,
+) {
     // Make sure panics are logged using `console.error`.
     console_error_panic_hook::set_once();
 
