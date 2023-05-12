@@ -8,7 +8,6 @@ rust-version = "1.65"
 [features]
 default = []
 client = []
-# server = []
 server = ["dep:actix-web", "dep:env_logger", "dep:actix-cors"]
 
 

@@ -88,59 +88,11 @@ pub struct SummaryTile {
     pub utilization: Vec<UtilPoint>,
 }
 
-impl PartialEq for SummaryTile {
-    fn eq(&self, other: &Self) -> bool {
-        self.entry_id == other.entry_id && self.tile_id == other.tile_id
-    }
-}
-
-impl Eq for SummaryTile {
-
-}
-
-impl PartialOrd for SummaryTile {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SummaryTile {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.entry_id
-            .cmp(&other.entry_id)
-            .then(self.tile_id.cmp(&other.tile_id))
-    }
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SlotTile {
     pub entry_id: EntryID,
     pub tile_id: TileID,
     pub items: Vec<Vec<Item>>, // row -> [item]
-}
-
-impl PartialEq for SlotTile {
-    fn eq(&self, other: &Self) -> bool {
-        self.entry_id == other.entry_id && self.tile_id == other.tile_id
-    }
-}
-
-impl Eq for SlotTile {
-
-}
-
-impl PartialOrd for SlotTile {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SlotTile {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.entry_id
-            .cmp(&other.entry_id)
-            .then(self.tile_id.cmp(&other.tile_id))
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -150,33 +102,7 @@ pub struct SlotMetaTile {
     pub items: Vec<Vec<ItemMeta>>, // row -> [item]
 }
 
-impl PartialEq for SlotMetaTile {
-    fn eq(&self, other: &Self) -> bool {
-        self.entry_id == other.entry_id && self.tile_id == other.tile_id
-    }
-}
-
-
-impl Eq for SlotMetaTile {
-    
-}
-
-impl PartialOrd for SlotMetaTile {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for SlotMetaTile {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.entry_id
-            .cmp(&other.entry_id)
-            .then(self.tile_id.cmp(&other.tile_id))
-    }
-}
-
 pub trait DataSource {
-
     fn init(&mut self) -> Initializer;
     fn interval(&mut self) -> Interval;
     fn fetch_info(&mut self) -> &EntryInfo;
