@@ -97,6 +97,29 @@ struct Window {
     index: u64,
     kinds: Vec<String>,
     config: Config,
+
+    // HACK
+    tile_meta_cache: BTreeMap<(EntryID, TileID), Option<SlotMetaTile>>,
+}
+
+fn fetch_meta_tile(
+    config: &mut Config,
+    tile_meta_cache: &mut BTreeMap<(EntryID, TileID), Option<SlotMetaTile>>,
+    entry_id: &EntryID,
+    tile_id: &TileID,
+) -> Option<SlotMetaTile> {
+    if tile_meta_cache.contains_key(&(entry_id.clone(), tile_id.clone())) {
+        return tile_meta_cache
+            .get(&(entry_id.clone(), tile_id.clone()))
+            .unwrap()
+            .clone();
+    } else {
+        config
+            .data_source
+            .fetch_slot_meta_tile(entry_id.clone(), tile_id.clone());
+        tile_meta_cache.insert((entry_id.clone(), tile_id.clone()), None);
+        return None;
+    }
 }
 
 #[derive(Default, Deserialize, Serialize)]
@@ -925,6 +948,7 @@ impl Window {
             index,
             kinds: config.data_source.fetch_info().kinds(),
             config,
+            tile_meta_cache: BTreeMap::new(),
         }
     }
 
@@ -1080,28 +1104,49 @@ impl Window {
         }
     }
 
-    fn find_slot_entry<'a>(&'a mut self, entry_id: &EntryID) -> Option<&'a mut Slot> {
+    fn find_slot_entry<'a>(&'a mut self, slot_tile: &SlotTile) -> Option<&'a mut Slot> {
         for node in &mut self.panel.slots {
             for node2 in &mut node.slots {
                 for node3 in &mut node2.slots {
-                    if node3.entry_id == entry_id.clone() {
+                    if node3.entry_id == slot_tile.entry_id.clone() {
                         return Some(node3);
                     }
                 }
             }
         }
 
-        return None;
+        None
+    }
+
+    fn find_slot_meta_entry<'a>(&'a mut self, slot_tile: &SlotMetaTile) -> Option<&'a mut Slot> {
+        for node in &mut self.panel.slots {
+            for node2 in &mut node.slots {
+                for node3 in &mut node2.slots {
+                    if node3.entry_id == slot_tile.entry_id.clone() {
+                        self.tile_meta_cache.insert(
+                            (slot_tile.entry_id.clone(), slot_tile.tile_id),
+                            Some(slot_tile.clone()),
+                        );
+                        return Some(node3);
+                    }
+                }
+            }
+        }
+
+        None
     }
 
     fn find_summary_entry<'a>(&'a mut self, entry_id: &EntryID) -> Option<&'a mut Summary> {
         for node in &mut self.panel.slots {
-            if node.summary.is_some() && node.summary.as_ref().unwrap().entry_id == entry_id.clone() {
+            if node.summary.is_some() && node.summary.as_ref().unwrap().entry_id == entry_id.clone()
+            {
                 return node.summary.as_mut();
             }
 
             for node2 in &mut node.slots {
-                if node2.summary.is_some() && node2.summary.as_ref().unwrap().entry_id == entry_id.clone() {
+                if node2.summary.is_some()
+                    && node2.summary.as_ref().unwrap().entry_id == entry_id.clone()
+                {
                     return node2.summary.as_mut();
                 }
             }
@@ -1350,7 +1395,7 @@ impl eframe::App for ProfApp {
             // gather slot tiles
             let slot_tiles = window.config.data_source.get_slot_tile();
             for tile in slot_tiles {
-                let entry = window.find_slot_entry(&tile.entry_id);
+                let entry = window.find_slot_entry(&tile);
 
                 if let Some(entry) = entry {
                     if entry.slot_tiles.contains_key(&tile.tile_id) {
@@ -1371,15 +1416,16 @@ impl eframe::App for ProfApp {
                 }
             }
 
-            // gather meta tiles 
+            // gather meta tiles
             let meta_tiles = window.config.data_source.get_slot_meta_tile();
             for tile in meta_tiles {
-                let entry = window.find_slot_entry(&tile.entry_id);
+                let entry: Option<&mut Slot> = window.find_slot_meta_entry(&tile);
 
                 if let Some(entry) = entry {
                     if entry.tile_metas.contains_key(&tile.tile_id) {
                         entry.tile_metas.insert(tile.tile_id, Some(tile));
                     }
+                    // also add to the window meta cache
                 }
             }
 
@@ -1407,7 +1453,7 @@ impl eframe::App for ProfApp {
             });
         });
 
-        egui::SidePanel::left("side_panel").show(ctx, |ui| {
+        egui::SidePanel::left("side_panel").show(ctx, |ui: &mut egui::Ui| {
             let body = TextStyle::Body.resolve(ui.style()).size;
             let heading = TextStyle::Heading.resolve(ui.style()).size;
             // Just set this on every frame for now
@@ -1447,209 +1493,219 @@ impl eframe::App for ProfApp {
 
                 ui.separator();
 
-                // ui.subheading("Search: ", cx);
+                ui.subheading("Search: ", cx);
 
-                // let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::LEFT), |ui| {
-                //     if ui.button("✖").clicked() {
-                //         cx.selected_state.clear_search()
-                //     }
-                //     ui.text_edit_singleline(&mut cx.selected_state.search)
-                // });
+                let reply = ui.with_layout(egui::Layout::right_to_left(egui::Align::LEFT), |ui| {
+                    if ui.button("✖").clicked() {
+                        cx.selected_state.clear_search()
+                    }
+                    ui.text_edit_singleline(&mut cx.selected_state.search)
+                });
 
-                // if reply.inner.changed() || cx.zoom_state.zoom_count < 2 {
-                //     // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
-                //     if cx.zoom_state.zoom_count < 2 {
-                //         cx.zoom_state.zoom_count += 1;
-                //     }
-                //     let mut searched = 0;
-                //     cx.selected_state.clear_highlighted_items();
+                if reply.inner.changed() || cx.zoom_state.zoom_count < 2 {
+                    // HACK: reset selected nodes twice per zoom. No clue why this is necessary.
+                    if cx.zoom_state.zoom_count < 2 {
+                        cx.zoom_state.zoom_count += 1;
+                    }
+                    let mut searched = 0;
+                    cx.selected_state.clear_highlighted_items();
 
-                //     if !cx.selected_state.search.is_empty() {
-                //         // traverse panel tree
-                //         'outer: for window in windows.iter_mut() {
-                //             let config = &mut window.config;
-                //             for node in window.panel.slots.iter_mut() {
-                //                 for channel in node.slots.iter_mut() {
-                //                     for slot in channel.slots.iter_mut() {
-                //                         if slot.tiles.is_empty() {
-                //                             slot.inflate(config, cx)
-                //                         };
+                    if !cx.selected_state.search.is_empty() {
+                        // traverse panel tree
+                        'outer: for window in windows.iter_mut() {
+                            let Window {
+                                config,
+                                tile_meta_cache,
+                                ..
+                            } = window;
+                            for node in window.panel.slots.iter_mut() {
+                                for channel in node.slots.iter_mut() {
+                                    for slot in channel.slots.iter_mut() {
+                                        if slot.tiles.is_empty() {
+                                            slot.inflate(config, cx)
+                                        };
 
-                //                         for tile in slot.tiles.iter_mut() {
-                //                             let meta = config
-                //                                 .data_source
-                //                                 .fetch_slot_meta_tile(&slot.entry_id, tile.tile_id);
-                //                             for (row, i) in meta.items.iter().enumerate() {
-                //                                 for (idx, j) in i.iter().enumerate() {
-                //                                     if cx.selected_state.search(&j.title) {
-                //                                         let selected_item = SelectedItem {
-                //                                             entry_id: slot.entry_id.clone(),
-                //                                             tile_id: tile.tile_id,
-                //                                             item_uid: j.item_uid,
-                //                                             row,
-                //                                             index: idx,
-                //                                             meta: j.clone(),
-                //                                         };
+                                        for tile in slot.tiles.iter_mut() {
+                                            let meta = fetch_meta_tile(
+                                                config,
+                                                tile_meta_cache,
+                                                &slot.entry_id,
+                                                &tile.tile_id,
+                                            );
+                                            if let Some(meta) = meta {
+                                                for (row, i) in meta.items.iter().enumerate() {
+                                                    for (idx, j) in i.iter().enumerate() {
+                                                        if cx.selected_state.search(&j.title) {
+                                                            let selected_item = SelectedItem {
+                                                                entry_id: slot.entry_id.clone(),
+                                                                tile_id: tile.tile_id,
+                                                                item_uid: j.item_uid,
+                                                                row,
+                                                                index: idx,
+                                                                meta: j.clone(),
+                                                            };
 
-                //                                         cx.selected_state
-                //                                             .add_highlighted_item(selected_item);
-                //                                         cx.selected_state.num_matches += 1;
-                //                                     }
-                //                                     searched += 1;
-                //                                     if searched >= MAX_SEARCHED_ITEMS {
-                //                                         break 'outer;
-                //                                     }
-                //                                 }
-                //                             }
-                //                         }
-                //                     }
-                //                 }
-                //             }
-                //         }
-                //     }
-                // }
-                // if !cx.selected_state.search.is_empty() {
-                //     let exceeded_max = cx.selected_state.num_matches >= MAX_SELECTED_ITEMS;
-                //     let asterisk = if exceeded_max { "*" } else { "" };
-                //     let es = if cx.selected_state.num_matches == 1 {
-                //         ""
-                //     } else {
-                //         "es"
-                //     };
-                //     ui.label(format!(
-                //         "Found {matches} match{es}{asterisk}",
-                //         matches = cx.selected_state.num_matches
-                //     ));
-                //     if exceeded_max {
-                //         ui.label(format!(
-                //             "* Only displaying the first {MAX_SELECTED_ITEMS} matches",
-                //         ));
-                //     }
-                // }
+                                                            cx.selected_state.add_highlighted_item(
+                                                                selected_item,
+                                                            );
+                                                            cx.selected_state.num_matches += 1;
+                                                        }
+                                                        searched += 1;
+                                                        if searched >= MAX_SEARCHED_ITEMS {
+                                                            break 'outer;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                if !cx.selected_state.search.is_empty() {
+                    let exceeded_max = cx.selected_state.num_matches >= MAX_SELECTED_ITEMS;
+                    let asterisk = if exceeded_max { "*" } else { "" };
+                    let es = if cx.selected_state.num_matches == 1 {
+                        ""
+                    } else {
+                        "es"
+                    };
+                    ui.label(format!(
+                        "Found {matches} match{es}{asterisk}",
+                        matches = cx.selected_state.num_matches
+                    ));
+                    if exceeded_max {
+                        ui.label(format!(
+                            "* Only displaying the first {MAX_SELECTED_ITEMS} matches",
+                        ));
+                    }
+                }
 
-                // ui.separator();
+                ui.separator();
 
-                // ScrollArea::vertical()
-                //     .max_height(ui.available_height() - 60.0)
-                //     .auto_shrink([false; 2])
-                //     .show_rows(
-                //         ui,
-                //         row_height,
-                //         cx.selected_state.highlighted_items.len(),
-                //         |ui, _row_range| {
-                //             let mut count = 0;
-                //             for window in windows.iter_mut() {
-                //                 let top_level = get_entries_with_level(
-                //                     &cx.selected_state.highlighted_items.keys().collect(),
-                //                     0,
-                //                 );
-                //                 for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
-                //                     // grab top_level entries of i entry_id
+                ScrollArea::vertical()
+                    .max_height(ui.available_height() - 60.0)
+                    .auto_shrink([false; 2])
+                    .show_rows(
+                        ui,
+                        row_height,
+                        cx.selected_state.highlighted_items.len(),
+                        |ui, _row_range| {
+                            let mut count = 0;
+                            for window in windows.iter_mut() {
+                                let top_level = get_entries_with_level(
+                                    &cx.selected_state.highlighted_items.keys().collect(),
+                                    0,
+                                );
+                                for (i, nodes) in window.panel.slots.iter_mut().enumerate() {
+                                    // grab top_level entries of i entry_id
 
-                //                     let top_entry = EntryID::root().child(i as u64);
+                                    let top_entry = EntryID::root().child(i as u64);
 
-                //                     if !cx.selected_state.entries_highlighted.contains(&top_entry) {
-                //                         continue;
-                //                     }
-                //                     let top_level_filter = get_filtered_entries(&top_level, 0, i);
-                //                     let middle_level = get_entries_with_level(&top_level_filter, 1);
-                //                     if middle_level.is_empty() || middle_level[0].is_empty() {
-                //                         continue;
-                //                     }
-                //                     ui.collapsing(nodes.long_name.to_string(), |ui| {
-                //                         for (j, channels) in nodes.slots.iter_mut().enumerate() {
-                //                             let middle_entry = top_entry.child(j as u64);
-                //                             if !cx
-                //                                 .selected_state
-                //                                 .entries_highlighted
-                //                                 .contains(&middle_entry)
-                //                             {
-                //                                 continue;
-                //                             }
-                //                             let middle_level_filter =
-                //                                 get_filtered_entries(&middle_level, 1, j);
-                //                             let bottom_level =
-                //                                 get_entries_with_level(&middle_level_filter, 2);
+                                    if !cx.selected_state.entries_highlighted.contains(&top_entry) {
+                                        continue;
+                                    }
+                                    let top_level_filter = get_filtered_entries(&top_level, 0, i);
+                                    let middle_level = get_entries_with_level(&top_level_filter, 1);
+                                    if middle_level.is_empty() || middle_level[0].is_empty() {
+                                        continue;
+                                    }
+                                    ui.collapsing(nodes.long_name.to_string(), |ui| {
+                                        for (j, channels) in nodes.slots.iter_mut().enumerate() {
+                                            let middle_entry = top_entry.child(j as u64);
+                                            if !cx
+                                                .selected_state
+                                                .entries_highlighted
+                                                .contains(&middle_entry)
+                                            {
+                                                continue;
+                                            }
+                                            let middle_level_filter =
+                                                get_filtered_entries(&middle_level, 1, j);
+                                            let bottom_level =
+                                                get_entries_with_level(&middle_level_filter, 2);
 
-                //                             if bottom_level.is_empty() || bottom_level[0].is_empty()
-                //                             {
-                //                                 continue;
-                //                             }
-                //                             ui.collapsing(channels.long_name.to_string(), |ui| {
-                //                                 for (k, slot) in
-                //                                     channels.slots.iter_mut().enumerate()
-                //                                 {
-                //                                     let bottom_entry = middle_entry.child(k as u64);
-                //                                     if !cx
-                //                                         .selected_state
-                //                                         .entries_highlighted
-                //                                         .contains(&bottom_entry)
-                //                                     {
-                //                                         continue;
-                //                                     }
-                //                                     let bottom_level_filter =
-                //                                         get_filtered_entries(&bottom_level, 2, k);
+                                            if bottom_level.is_empty() || bottom_level[0].is_empty()
+                                            {
+                                                continue;
+                                            }
+                                            ui.collapsing(channels.long_name.to_string(), |ui| {
+                                                for (k, slot) in
+                                                    channels.slots.iter_mut().enumerate()
+                                                {
+                                                    let bottom_entry = middle_entry.child(k as u64);
+                                                    if !cx
+                                                        .selected_state
+                                                        .entries_highlighted
+                                                        .contains(&bottom_entry)
+                                                    {
+                                                        continue;
+                                                    }
+                                                    let bottom_level_filter =
+                                                        get_filtered_entries(&bottom_level, 2, k);
 
-                //                                     if bottom_level_filter.is_empty()
-                //                                         || bottom_level[0].is_empty()
-                //                                     {
-                //                                         continue;
-                //                                     }
-                //                                     ui.collapsing(
-                //                                         slot.long_name.to_string(),
-                //                                         |ui| {
-                //                                             'outer: for key in bottom_level_filter {
-                //                                                 for item in cx
-                //                                                     .selected_state
-                //                                                     .highlighted_items[key]
-                //                                                     .iter()
-                //                                                 {
-                //                                                     if count > MAX_SELECTED_ITEMS {
-                //                                                         break 'outer;
-                //                                                     }
-                //                                                     if ui
-                //                                                         .small_button(
-                //                                                             RichText::new(
-                //                                                                 item.meta
-                //                                                                     .title
-                //                                                                     .clone(),
-                //                                                             )
-                //                                                             .color(
-                //                                                                 Color32::from_rgb(
-                //                                                                     128, 140, 255,
-                //                                                                 ),
-                //                                                             ),
-                //                                                         )
-                //                                                         .clicked()
-                //                                                     {
-                //                                                         egui::Window::new(
-                //                                                             "My Window",
-                //                                                         )
-                //                                                         .show(ctx, |ui| {
-                //                                                             ui.label(
-                //                                                                 "Hello World!",
-                //                                                             );
-                //                                                         });
-                //                                                         cx.selected_state
-                //                                                             .selected =
-                //                                                             Some(item.clone());
-                //                                                         nodes.expanded = true;
-                //                                                         channels.expanded = true;
-                //                                                         slot.expanded = true;
-                //                                                         count += 1;
-                //                                                     }
-                //                                                 }
-                //                                             }
-                //                                         },
-                //                                     );
-                //                                 }
-                //                             });
-                //                         }
-                //                     });
-                //                 }
-                //             }
-                //         },
-                //     );
+                                                    if bottom_level_filter.is_empty()
+                                                        || bottom_level[0].is_empty()
+                                                    {
+                                                        continue;
+                                                    }
+                                                    ui.collapsing(
+                                                        slot.long_name.to_string(),
+                                                        |ui| {
+                                                            'outer: for key in bottom_level_filter {
+                                                                for item in cx
+                                                                    .selected_state
+                                                                    .highlighted_items[key]
+                                                                    .iter()
+                                                                {
+                                                                    if count > MAX_SELECTED_ITEMS {
+                                                                        break 'outer;
+                                                                    }
+                                                                    if ui
+                                                                        .small_button(
+                                                                            RichText::new(
+                                                                                item.meta
+                                                                                    .title
+                                                                                    .clone(),
+                                                                            )
+                                                                            .color(
+                                                                                Color32::from_rgb(
+                                                                                    128, 140, 255,
+                                                                                ),
+                                                                            ),
+                                                                        )
+                                                                        .clicked()
+                                                                    {
+                                                                        egui::Window::new(
+                                                                            "My Window",
+                                                                        )
+                                                                        .show(ctx, |ui| {
+                                                                            ui.label(
+                                                                                "Hello World!",
+                                                                            );
+                                                                        });
+                                                                        cx.selected_state
+                                                                            .selected =
+                                                                            Some(item.clone());
+                                                                        nodes.expanded = true;
+                                                                        channels.expanded = true;
+                                                                        slot.expanded = true;
+                                                                        count += 1;
+                                                                    }
+                                                                }
+                                                            }
+                                                        },
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                            }
+                        },
+                    );
             });
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 // println!("{}", ui.height());
