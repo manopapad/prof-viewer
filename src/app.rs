@@ -1842,7 +1842,7 @@ impl eframe::App for ProfApp {
 
         Self::keyboard(ctx, cx);
 
-        // ctx.request_repaint_after(Duration::from_millis(50));
+        ctx.request_repaint_after(Duration::from_millis(100));
     }
 }
 
