@@ -1,2 +1,6 @@
 [build]
 filehash = false
+
+[watch]
+
+watch = ["src"]

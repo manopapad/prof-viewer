@@ -6,8 +6,9 @@ use crate::{
     timestamp::Interval,
 };
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProcessType {
+    FETCH_INFO,
     FETCH_SLOT_META_TILE,
     FETCH_SLOT_TILE,
     FETCH_TILES,

@@ -41,7 +41,7 @@ impl DataSourceHTTPServer {
     async fn get_entry_name(data: web::Data<AppState>) -> impl Responder {
         let mutex = &data.data_source;
         let mut source = mutex.lock().unwrap();
-        let e = match source.fetch_info() {
+        let e = match source.fetch_info().entry_info {
             EntryInfo::Panel { short_name, .. } => short_name.clone(),
             _ => "hello".to_string(),
         };
@@ -59,7 +59,7 @@ impl DataSourceHTTPServer {
     async fn interval(data: web::Data<AppState>) -> Result<impl Responder> {
         let mutex = &data.data_source;
         let mut source = mutex.lock().unwrap();
-        let to_ret = source.interval();
+        let to_ret = source.fetch_info().interval;
         Ok(web::Json(to_ret))
     }
     
@@ -117,13 +117,6 @@ impl DataSourceHTTPServer {
     }
 
 
-    async fn init(data: web::Data<AppState>) -> Result<impl Responder> {
-        let mutex = &data.data_source;
-        let mut source = mutex.lock().unwrap();
-        let to_ret = source.init();
-        Ok(web::Json(to_ret))
-    }
-
     #[actix_web::main]
     pub async fn create_server(self) -> std::io::Result<()> {
         let state = Data::from(Arc::new(self.state));
@@ -153,7 +146,7 @@ impl DataSourceHTTPServer {
                 )
                 .route("/slot_tile", web::post().to(Self::fetch_slot_tile))
                 .route("/summary_tile", web::post().to(Self::fetch_summary_tile))
-                .route("/init", web::post().to(Self::init))
+                
         })
         .bind((self.host.as_str(), self.port))?
         .run()

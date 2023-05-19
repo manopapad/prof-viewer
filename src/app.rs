@@ -4,15 +4,17 @@ use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet};
 use std::hash::{Hash, Hasher};
+use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, SummaryTile, TileID, UtilPoint,
+    self, DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, SummaryTile, TileID,
+    UtilPoint,
 };
 use crate::queue::stamp::Stamp;
 
-// use crate::logging::{ console_log, log};
+use crate::logging::{console_log, log};
 use crate::search::{SelectedItem, SelectedState};
 use crate::timestamp::Interval;
 
@@ -172,6 +174,9 @@ struct ProfApp {
     windows: Vec<Window>,
 
     #[serde(skip)]
+    source: Option<Box<dyn DeferredDataSource>>,
+
+    #[serde(skip)]
     extra_source: Option<Box<dyn DeferredDataSource>>,
 
     cx: Context,
@@ -179,6 +184,8 @@ struct ProfApp {
     #[cfg(not(target_arch = "wasm32"))]
     #[serde(skip)]
     last_update: Option<Instant>,
+
+    initialized: bool,
 }
 
 trait Entry {
@@ -925,8 +932,9 @@ impl<S: Entry> Entry for Panel<S> {
 
 impl Config {
     fn new(mut data_source: Box<dyn DeferredDataSource>) -> Self {
-        let max_node = data_source.fetch_info().nodes();
-        let interval = data_source.init().interval;
+        let init: data::Initializer = data_source.get_info().unwrap();
+        let max_node = init.entry_info.nodes();
+        let interval = init.interval;
 
         // console_log!("configinterval: {:?}", interval);
 
@@ -942,11 +950,13 @@ impl Config {
 impl Window {
     fn new(data_source: Box<dyn DeferredDataSource>, index: u64) -> Self {
         let mut config = Config::new(data_source);
-
+        let init = config.data_source.get_info().unwrap();
+        log("window init");
+        console_log!("init: {:?}", init.entry_info);
         Self {
-            panel: Panel::new(&config.data_source.fetch_info(), EntryID::root()),
+            panel: Panel::new(&init.entry_info, EntryID::root()),
             index,
-            kinds: config.data_source.fetch_info().kinds(),
+            kinds: init.entry_info.kinds(),
             config,
             tile_meta_cache: BTreeMap::new(),
         }
@@ -1174,12 +1184,20 @@ impl ProfApp {
             Default::default()
         };
 
+        let mut data_source = data_source;
+        data_source.fetch_info();
+        if let Some(ref mut extra_source) = result.extra_source {
+            extra_source.fetch_info();
+        }
+
         result.windows.clear();
-        result.windows.push(Window::new(data_source, 0));
-        let window = result.windows.last().unwrap();
-        result.cx.total_interval = window.config.interval;
+        // result.windows.push(Window::new(data_source, 0));
+        // let window = result.windows.last().unwrap();
+        // result.cx.total_interval = window.config.interval;
         result.extra_source = extra_source;
-        Self::zoom(&mut result.cx, window.config.interval);
+        result.source = Some(data_source);
+        result.initialized = false;
+        // Self::zoom(&mut result.cx, window.config.interval);
 
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -1270,6 +1288,11 @@ impl ProfApp {
         // Hack: the UI rect we have at this point is not where the
         // timeline is being drawn. So fish out the coordinates we
         // need to draw the correct rect.
+
+        // bug: sometimes the slot_rect is None
+        if cx.slot_rect.is_none() {
+            return;
+        }
         let ui_rect = ui.min_rect();
         let slot_rect = cx.slot_rect.unwrap();
         let rect = Rect::from_min_max(
@@ -1386,10 +1409,24 @@ impl eframe::App for ProfApp {
             cx,
             #[cfg(not(target_arch = "wasm32"))]
             last_update,
+            source,
             ..
         } = self;
 
         // get any pending data source updates
+
+        if !self.initialized && source.is_some() {
+            let mut src = source.take().unwrap();
+            if src.get_info().is_some() {
+                windows.push(Window::new(src, 0));
+                let window: &mut Window = windows.last_mut().unwrap();
+                cx.total_interval = window.config.interval;
+                ProfApp::zoom(cx, cx.total_interval);
+                self.initialized = true;
+            } else {
+                source.replace(src);
+            }
+        }
 
         for window in windows.iter_mut() {
             // gather slot tiles
@@ -1798,6 +1835,8 @@ impl eframe::App for ProfApp {
         });
 
         Self::keyboard(ctx, cx);
+
+        ctx.request_repaint_after(Duration::from_millis(50));
     }
 }
 

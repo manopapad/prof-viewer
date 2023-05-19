@@ -24,8 +24,7 @@ pub struct HTTPQueueDataSource {
     pub port: u16,
     pub client: reqwest::Client,
     pub queue: Arc<Mutex<Vec<Work>>>,
-    pub fetch_info: EntryInfo,
-    pub initializer: Initializer,
+    pub info: Option<Initializer>,
     pub interval: Interval,
     fetch_tiles_cache: BTreeMap<EntryID, Vec<TileID>>,
     fetch_summary_tiles_cache: Vec<SummaryTile>,
@@ -34,12 +33,7 @@ pub struct HTTPQueueDataSource {
 }
 
 impl HTTPQueueDataSource {
-    pub fn new(
-        host: String,
-        port: u16,
-        queue: Arc<Mutex<Vec<Work>>>,
-        initializer: Initializer,
-    ) -> Self {
+    pub fn new(host: String, port: u16, queue: Arc<Mutex<Vec<Work>>>) -> Self {
         log("INIT HTTPQueueDataSource");
         Self {
             host,
@@ -52,8 +46,7 @@ impl HTTPQueueDataSource {
                 .unwrap(),
             // queue: Arc::new(Mutex::new(Vec::new())),
             queue,
-            fetch_info: initializer.clone().entry_info,
-            initializer: initializer.clone(),
+            info: None,
             interval: Interval::default(),
             fetch_tiles_cache: BTreeMap::new(),
             fetch_summary_tiles_cache: Vec::new(),
@@ -110,6 +103,14 @@ impl HTTPQueueDataSource {
                     // self.fetch_slot_meta_tiles_cache.clear();
                     // self.fetch_slot_tiles_cache.clear();
                 }
+                ProcessType::FETCH_INFO => {
+                    // deserialize work.data into EntryInfo
+                    console_log!("found fetch info in queue");
+                    let info: Initializer =
+                        serde_json::from_str::<Initializer>(&work.data).unwrap();
+                    // add to cache
+                    self.info = Some(info);
+                }
             }
         }
         // empty queue
@@ -129,6 +130,7 @@ impl HTTPQueueDataSource {
                 format!("http://{}:{}/summary_tile", self.host, self.port)
             }
             ProcessType::INTERVAL => format!("http://{}:{}/interval", self.host, self.port),
+            ProcessType::FETCH_INFO => format!("http://{}:{}/info", self.host, self.port),
         };
 
         let body = match work.process_type {
@@ -153,6 +155,7 @@ impl HTTPQueueDataSource {
             })
             .unwrap(),
             ProcessType::INTERVAL => "".to_string(),
+            ProcessType::FETCH_INFO => "".to_string(),
         };
 
         let request = Request {
@@ -176,36 +179,36 @@ impl HTTPQueueDataSource {
                 data: result.unwrap().text().unwrap().to_string(),
                 process_type: work.process_type,
             };
-
-            // console_log!("ASYNC: pushing new work to queue: {:?}", work);
+            if work.process_type == ProcessType::FETCH_INFO {
+                console_log!("ASYNC: pushing new work to queue: {:?}", work);
+            }
             queue.lock().unwrap().push(work);
         });
     }
 }
 
 impl DeferredDataSource for HTTPQueueDataSource {
-    fn interval(&mut self) -> Interval {
+    fn fetch_info(&mut self) {
         self.process_queue();
+
         let work = Work {
             entry_id: EntryID::root(),
             tile_id: None,
             tile_ids: None,
             interval: None,
             data: "".to_string(),
-            process_type: ProcessType::INTERVAL,
+            process_type: ProcessType::FETCH_INFO,
         };
         self.queue_work(work);
-        self.interval
+        console_log!("added fetch_info to queue");
     }
-    fn fetch_info(&mut self) -> EntryInfo {
+
+    fn get_info(&mut self) -> Option<Initializer> {
+        console_log!("checking get_info");
         self.process_queue();
-
-        self.fetch_info.clone()
+        self.info.clone()
     }
 
-    fn init(&mut self) -> crate::data::Initializer {
-        self.initializer.clone()
-    }
     fn fetch_tiles(&mut self, entry_id: EntryID, request_interval: Interval) {
         self.process_queue();
         // queue work

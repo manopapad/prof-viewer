@@ -7,9 +7,8 @@ use crate::data::{
 use crate::timestamp::Interval;
 
 pub trait DeferredDataSource {
-    fn init(&mut self) -> Initializer;
-    fn interval(&mut self) -> Interval;
-    fn fetch_info(&mut self) -> EntryInfo;
+    fn fetch_info(&mut self);
+    fn get_info(&mut self) -> Option<Initializer>;
     fn fetch_tiles(&mut self, entry_id: EntryID, request_interval: Interval);
     fn get_tiles(&mut self, entry_id: EntryID) -> Vec<TileID>;
     fn fetch_summary_tile(&mut self, entry_id: EntryID, tile_id: TileID);
@@ -41,16 +40,13 @@ impl DeferredDataSourceWrapper {
 }
 
 impl DeferredDataSource for DeferredDataSourceWrapper {
-    fn init(&mut self) -> Initializer {
-        self.data_source.init()
+
+
+    fn fetch_info(&mut self) {
     }
 
-    fn interval(&mut self) -> Interval {
-        self.data_source.interval()
-    }
-
-    fn fetch_info(&mut self) -> EntryInfo {
-        self.data_source.fetch_info().clone()
+    fn get_info(&mut self) -> Option<Initializer> {
+        Some(self.data_source.fetch_info().clone())
     }
 
     fn fetch_tiles(&mut self, entry_id: EntryID, request_interval: Interval) {

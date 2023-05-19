@@ -1702,14 +1702,17 @@ dependencies = [
  "ehttp",
  "env_logger",
  "getrandom",
+ "js-sys",
  "rand",
  "reqwest",
  "serde",
  "serde_json",
  "tracing-subscriber",
  "tracing-wasm",
+ "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

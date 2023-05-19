@@ -3,8 +3,8 @@
 
 use egui::{Color32, NumExt};
 use legion_prof_viewer::data::{
-    DataSource, EntryID, EntryInfo, Field, Item, ItemMeta, ItemUID, SlotMetaTile, SlotTile,
-    SummaryTile, TileID, UtilPoint, Initializer,
+    DataSource, EntryID, EntryInfo, Field, Initializer, Item, ItemMeta, ItemUID, SlotMetaTile,
+    SlotTile, SummaryTile, TileID, UtilPoint,
 };
 use legion_prof_viewer::http::queueclient::HTTPQueueDataSource;
 use legion_prof_viewer::logging::*;
@@ -12,16 +12,71 @@ use legion_prof_viewer::timestamp::{Interval, Timestamp};
 use rand::Rng;
 use std::collections::BTreeMap;
 
+use wasm_bindgen::prelude::*;
+use wasm_bindgen_futures::JsFuture;
+use web_sys::{Request, RequestInit, RequestMode, Response};
+use url::{Url, ParseError};
+
+
 fn main() {
-    let f_info: &str = r#"{"entry_info":{"Panel":{"short_name":"root","long_name":"root","summary":null,"slots":[{"Panel":{"short_name":"n0","long_name":"Node 0","summary":null,"slots":[{"Panel":{"short_name":"cpu","long_name":"Node 0 CPU","summary":{"Summary":{"color":[70,130,180,255]}},"slots":[{"Slot":{"short_name":"c1","long_name":"Node 0 CPU 1","max_rows":3}},{"Slot":{"short_name":"c2","long_name":"Node 0 CPU 2","max_rows":2}},{"Slot":{"short_name":"c3","long_name":"Node 0 CPU 3","max_rows":2}},{"Slot":{"short_name":"c4","long_name":"Node 0 CPU 4","max_rows":2}}]}},{"Panel":{"short_name":"utility","long_name":"Node 0 Utility","summary":{"Summary":{"color":[220,20,60,255]}},"slots":[{"Slot":{"short_name":"u0","long_name":"Node 0 Utility 0","max_rows":5}}]}},{"Panel":{"short_name":"system","long_name":"Node 0 System","summary":{"Summary":{"color":[107,142,35,255]}},"slots":[{"Slot":{"short_name":"s0","long_name":"Node 0 System 0","max_rows":34}}]}},{"Panel":{"short_name":"file","long_name":"Node 0 File","summary":{"Summary":{"color":[255,69,0,255]}},"slots":[{"Slot":{"short_name":"f2","long_name":"Node 0 File 2","max_rows":50}}]}},{"Panel":{"short_name":"chan","long_name":"Node 0 Channel","summary":{"Summary":{"color":[255,69,0,255]}},"slots":[{"Slot":{"short_name":"f n0s","long_name":"Fill Node 0 System 0","max_rows":6}},{"Slot":{"short_name":"g n0s","long_name":"Gather to Node 0 System 0","max_rows":4}},{"Slot":{"short_name":"n0s-n0s","long_name":"Node 0 System 0 to Node 0 System 0","max_rows":7}},{"Slot":{"short_name":"n0s-n0f","long_name":"Node 0 System 0 to Node 0 File 2","max_rows":41}}]}}]}}]}},"interval":{"start":0,"stop":18269727459}}"#;
+    // let f_info: &str = r#"{"entry_info":{"Panel":{"short_name":"root","long_name":"root","summary":null,"slots":[{"Panel":{"short_name":"n0","long_name":"Node 0","summary":null,"slots":[{"Panel":{"short_name":"cpu","long_name":"Node 0 CPU","summary":{"Summary":{"color":[70,130,180,255]}},"slots":[{"Slot":{"short_name":"c1","long_name":"Node 0 CPU 1","max_rows":3}},{"Slot":{"short_name":"c2","long_name":"Node 0 CPU 2","max_rows":2}},{"Slot":{"short_name":"c3","long_name":"Node 0 CPU 3","max_rows":2}},{"Slot":{"short_name":"c4","long_name":"Node 0 CPU 4","max_rows":2}}]}},{"Panel":{"short_name":"utility","long_name":"Node 0 Utility","summary":{"Summary":{"color":[220,20,60,255]}},"slots":[{"Slot":{"short_name":"u0","long_name":"Node 0 Utility 0","max_rows":5}}]}},{"Panel":{"short_name":"system","long_name":"Node 0 System","summary":{"Summary":{"color":[107,142,35,255]}},"slots":[{"Slot":{"short_name":"s0","long_name":"Node 0 System 0","max_rows":34}}]}},{"Panel":{"short_name":"file","long_name":"Node 0 File","summary":{"Summary":{"color":[255,69,0,255]}},"slots":[{"Slot":{"short_name":"f2","long_name":"Node 0 File 2","max_rows":50}}]}},{"Panel":{"short_name":"chan","long_name":"Node 0 Channel","summary":{"Summary":{"color":[255,69,0,255]}},"slots":[{"Slot":{"short_name":"f n0s","long_name":"Fill Node 0 System 0","max_rows":6}},{"Slot":{"short_name":"g n0s","long_name":"Gather to Node 0 System 0","max_rows":4}},{"Slot":{"short_name":"n0s-n0s","long_name":"Node 0 System 0 to Node 0 System 0","max_rows":7}},{"Slot":{"short_name":"n0s-n0f","long_name":"Node 0 System 0 to Node 0 File 2","max_rows":41}}]}}]}}]}},"interval":{"start":0,"stop":18269727459}}"#;
+
+    // let mut opts = RequestInit::new();
+    // opts.method("GET");
+    // opts.mode(RequestMode::Cors);
+
+    // let url = format!("http://127.0.0.1");
+
+    // let request = Request::new_with_str_and_init(&url, &opts)?;
+
+    // request
+    //     .headers()
+    //     .set("Accept", "application/javascript")?;
+
+    // let window = web_sys::window().unwrap();
+    // let resp_value = JsFuture::from(window.fetch_with_request(&request)).await?;
+
+    // let window: web_sys::Window = web_sys::window().unwrap();
+    let document = web_sys::window()
+        .and_then(|win| win.document())
+        .expect("Could not access document");
+
+    let loc = web_sys::window().unwrap().location();
+
+  
+
+
+    document.set_title("Adam was here!");
+ 
+    let href: String = loc.href().expect("msg");
+    let url = Url::parse(&href).expect("unable to parse url");
+
+    let mut host:Option<String> = None;
+    let mut port:Option<u16> = None;
+    url.query_pairs().for_each(|(key, value)| {
+        // check for host and port here
+        if key == "host" {
+            host = Some(value.to_string());
+        }
+        if key == "port" {
+            port = Some(value.parse::<u16>().unwrap());
+        }
+    });
+    if host.is_none() || port.is_none() {
+        host = Some("127.0.0.1".to_owned());
+        port = Some(8000);
+    }
+    
+
+    log(&href);
 
     log("start");
     // convert f_info into EntryInfo
-    let init: Initializer = serde_json::from_str(f_info).unwrap();
-    let queue = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let queue: std::sync::Arc<std::sync::Mutex<Vec<legion_prof_viewer::queue::queue::Work>>> =
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
     // create queue
-    let ds = HTTPQueueDataSource::new("127.0.0.1".to_string(), 8000, queue, init);
-    let boxed_ds = Box::new(ds);
+    let ds = HTTPQueueDataSource::new(host.unwrap(), port.unwrap(), queue);
+    let boxed_ds: Box<HTTPQueueDataSource> = Box::new(ds);
     legion_prof_viewer::app::start(boxed_ds, None);
 
     // legion_prof_viewer::app::start(
