@@ -34,7 +34,7 @@ pub struct SelectedItem {
 
     pub item_uid: ItemUID,
 
-    pub meta: ItemMeta,
+    pub meta: Option<ItemMeta>,
 
     pub row: usize,
 

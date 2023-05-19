@@ -68,7 +68,7 @@ struct Slot {
     max_rows: u64,
     slot_tiles: BTreeMap<TileID, Option<SlotTile>>,
     tiles: Vec<SlotTile>,
-    tile_metas: BTreeMap<TileID, Option<SlotMetaTile>>,
+    tile_metas: BTreeMap<(EntryID, TileID), Option<SlotMetaTile>>,
     last_view_interval: Option<Interval>,
     is_inflating: bool,
 }
@@ -454,13 +454,13 @@ impl Slot {
         config: &mut Config,
         cx: &mut Context,
     ) -> Option<SlotMetaTile> {
-        if self.tile_metas.contains_key(&tile_id) {
-            return self.tile_metas.get(&tile_id).unwrap().clone();
+        if self.tile_metas.contains_key(&(self.entry_id.clone(), tile_id)) {
+            return self.tile_metas.get(&(self.entry_id.clone(), tile_id)).unwrap().clone();
         } else {
             config
                 .data_source
                 .fetch_slot_meta_tile(self.entry_id.clone(), tile_id);
-            self.tile_metas.insert(tile_id, None);
+            self.tile_metas.insert((self.entry_id.clone(), tile_id), None);
             return None;
         }
     }
@@ -577,25 +577,28 @@ impl Slot {
                         }
                     } else if clicked {
                         // retire
-                        // let selected_item = SelectedItem {
-                        //     entry_id: self.entry_id.clone(),
-                        //     tile_id,
-                        //     meta: config
-                        //         .data_source
-                        //         .fetch_slot_meta_tile(&self.entry_id.clone(), tile_id)
-                        //         .items[row][item_idx]
-                        //         .clone(), // inefficient, but necessary to pick a single item's metadata
-                        //     row,
-                        //     item_uid: item.item_uid,
-                        //     index: item_idx,
-                        // };
-                        // cx.selected_state.add_highlighted_item(selected_item);
-                        // ui.painter().rect(
-                        //     item_rect,
-                        //     0.0,
-                        //     item.color,
-                        //     Stroke::new(2.0, Color32::WHITE),
-                        // );
+
+                        let meta = if let Some(m) = fetch_meta_tile(config, &mut self.tile_metas, &self.entry_id.clone(), &tile_id) {
+                            Some(m.items[row][item_idx].clone())
+                        } else 
+                        {
+                            None
+                        };
+                        let selected_item = SelectedItem {
+                            entry_id: self.entry_id.clone(),
+                            tile_id,
+                            meta,
+                            row,
+                            item_uid: item.item_uid,
+                            index: item_idx,
+                        };
+                        cx.selected_state.add_highlighted_item(selected_item);
+                        ui.painter().rect(
+                            item_rect,
+                            0.0,
+                            item.color,
+                            Stroke::new(2.0, Color32::WHITE),
+                        );
                     } else {
                         ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                     }
@@ -951,8 +954,8 @@ impl Window {
     fn new(data_source: Box<dyn DeferredDataSource>, index: u64) -> Self {
         let mut config = Config::new(data_source);
         let init = config.data_source.get_info().unwrap();
-        log("window init");
-        console_log!("init: {:?}", init.entry_info);
+        // log("window init");
+        // console_log!("init: {:?}", init.entry_info);
         Self {
             panel: Panel::new(&init.entry_info, EntryID::root()),
             index,
@@ -1459,8 +1462,8 @@ impl eframe::App for ProfApp {
                 let entry: Option<&mut Slot> = window.find_slot_meta_entry(&tile);
 
                 if let Some(entry) = entry {
-                    if entry.tile_metas.contains_key(&tile.tile_id) {
-                        entry.tile_metas.insert(tile.tile_id, Some(tile));
+                    if entry.tile_metas.contains_key(&(tile.entry_id.clone(), tile.tile_id)) {
+                        entry.tile_metas.insert((tile.entry_id.clone(), tile.tile_id), Some(tile));
                     }
                     // also add to the window meta cache
                 }
@@ -1579,7 +1582,7 @@ impl eframe::App for ProfApp {
                                                                 item_uid: j.item_uid,
                                                                 row,
                                                                 index: idx,
-                                                                meta: j.clone(),
+                                                                meta: Some(j.clone()),
                                                             };
 
                                                             cx.selected_state.add_highlighted_item(
@@ -1700,12 +1703,15 @@ impl eframe::App for ProfApp {
                                                                     if count > MAX_SELECTED_ITEMS {
                                                                         break 'outer;
                                                                     }
+                                                                    let item_str = if let Some (meta) = &item.meta {
+                                                                        meta.title.clone()
+                                                                    } else {
+                                                                        "Fetching item...".to_string()
+                                                                    };
                                                                     if ui
                                                                         .small_button(
                                                                             RichText::new(
-                                                                                item.meta
-                                                                                    .title
-                                                                                    .clone(),
+                                                                                item_str,
                                                                             )
                                                                             .color(
                                                                                 Color32::from_rgb(
@@ -1836,7 +1842,7 @@ impl eframe::App for ProfApp {
 
         Self::keyboard(ctx, cx);
 
-        ctx.request_repaint_after(Duration::from_millis(50));
+        // ctx.request_repaint_after(Duration::from_millis(50));
     }
 }
 

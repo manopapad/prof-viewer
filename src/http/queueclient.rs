@@ -34,7 +34,7 @@ pub struct HTTPQueueDataSource {
 
 impl HTTPQueueDataSource {
     pub fn new(host: String, port: u16, queue: Arc<Mutex<Vec<Work>>>) -> Self {
-        log("INIT HTTPQueueDataSource");
+        // log("INIT HTTPQueueDataSource");
         Self {
             host,
             port,
@@ -105,7 +105,7 @@ impl HTTPQueueDataSource {
                 }
                 ProcessType::FETCH_INFO => {
                     // deserialize work.data into EntryInfo
-                    console_log!("found fetch info in queue");
+                    // console_log!("found fetch info in queue");
                     let info: Initializer =
                         serde_json::from_str::<Initializer>(&work.data).unwrap();
                     // add to cache
@@ -122,15 +122,17 @@ impl HTTPQueueDataSource {
         let _work = work.clone();
         let url = match work.process_type {
             ProcessType::FETCH_SLOT_META_TILE => {
-                format!("http://{}:{}/slot_meta_tile", self.host, self.port)
+                format!("https://{}:{}/slot_meta_tile", self.host, self.port)
             }
-            ProcessType::FETCH_SLOT_TILE => format!("http://{}:{}/slot_tile", self.host, self.port),
-            ProcessType::FETCH_TILES => format!("http://{}:{}/tiles", self.host, self.port),
+            ProcessType::FETCH_SLOT_TILE => {
+                format!("https://{}:{}/slot_tile", self.host, self.port)
+            }
+            ProcessType::FETCH_TILES => format!("https://{}:{}/tiles", self.host, self.port),
             ProcessType::FETCH_SUMMARY_TILE => {
-                format!("http://{}:{}/summary_tile", self.host, self.port)
+                format!("https://{}:{}/summary_tile", self.host, self.port)
             }
-            ProcessType::INTERVAL => format!("http://{}:{}/interval", self.host, self.port),
-            ProcessType::FETCH_INFO => format!("http://{}:{}/info", self.host, self.port),
+            ProcessType::INTERVAL => format!("https://{}:{}/interval", self.host, self.port),
+            ProcessType::FETCH_INFO => format!("https://{}:{}/info", self.host, self.port),
         };
 
         let body = match work.process_type {
@@ -180,7 +182,7 @@ impl HTTPQueueDataSource {
                 process_type: work.process_type,
             };
             if work.process_type == ProcessType::FETCH_INFO {
-                console_log!("ASYNC: pushing new work to queue: {:?}", work);
+                // console_log!("ASYNC: pushing new work to queue: {:?}", work);
             }
             queue.lock().unwrap().push(work);
         });
@@ -200,11 +202,11 @@ impl DeferredDataSource for HTTPQueueDataSource {
             process_type: ProcessType::FETCH_INFO,
         };
         self.queue_work(work);
-        console_log!("added fetch_info to queue");
+        // console_log!("added fetch_info to queue");
     }
 
     fn get_info(&mut self) -> Option<Initializer> {
-        console_log!("checking get_info");
+        // console_log!("checking get_info");
         self.process_queue();
         self.info.clone()
     }
