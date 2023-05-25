@@ -10,7 +10,6 @@ use crate::data::{
     self, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, SummaryTile, TileID, UtilPoint,
 };
 
-use crate::logging::{console_log, log};
 use crate::search::{SelectedItem, SelectedState};
 use crate::timestamp::Interval;
 
@@ -106,17 +105,19 @@ fn fetch_meta_tile(
     entry_id: &EntryID,
     tile_id: &TileID,
 ) -> Option<SlotMetaTile> {
-    if tile_meta_cache.contains_key(&(entry_id.clone(), tile_id.clone())) {
-        return tile_meta_cache
-            .get(&(entry_id.clone(), tile_id.clone()))
-            .unwrap()
-            .clone();
-    } else {
+    if let std::collections::btree_map::Entry::Vacant(e) =
+        tile_meta_cache.entry((entry_id.clone(), *tile_id))
+    {
         config
             .data_source
-            .fetch_slot_meta_tile(entry_id.clone(), tile_id.clone());
-        tile_meta_cache.insert((entry_id.clone(), tile_id.clone()), None);
-        return None;
+            .fetch_slot_meta_tile(entry_id.clone(), *tile_id);
+        e.insert(None);
+        None
+    } else {
+        tile_meta_cache
+            .get(&(entry_id.clone(), *tile_id))
+            .unwrap()
+            .clone()
     }
 }
 
@@ -256,12 +257,11 @@ impl Summary {
         let interval = TileID(config.interval.intersection(cx.view_interval));
         // HACK: since only one tile is ever made
 
-        if !self.sum_tiles.contains_key(&interval) {
+        if let std::collections::btree_map::Entry::Vacant(e) = self.sum_tiles.entry(interval) {
             config
                 .data_source
                 .fetch_summary_tile(self.entry_id.clone(), interval);
-            self.sum_tiles.insert(interval, None);
-            return;
+            e.insert(None);
         } else if let Some(sum_tile) = self.sum_tiles.get(&interval).unwrap() {
             self.utilization.extend(sum_tile.utilization.clone());
             self.is_inflating = false;
@@ -432,12 +432,11 @@ impl Slot {
         let interval = TileID(config.interval.intersection(cx.view_interval));
         // HACK: since only one tile is ever made
 
-        if !self.slot_tiles.contains_key(&interval) {
+        if let std::collections::btree_map::Entry::Vacant(e) = self.slot_tiles.entry(interval) {
             config
                 .data_source
                 .fetch_slot_tile(self.entry_id.clone(), interval);
-            self.slot_tiles.insert(interval, None);
-            return;
+            e.insert(None);
         } else if let Some(slot_tile) = self.slot_tiles.get(&interval).unwrap() {
             self.tiles.push(slot_tile.clone());
             self.is_inflating = false;
@@ -445,22 +444,19 @@ impl Slot {
     }
 
     fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config) -> Option<SlotMetaTile> {
-        if self
-            .tile_metas
-            .contains_key(&(self.entry_id.clone(), tile_id))
+        if let std::collections::btree_map::Entry::Vacant(e) =
+            self.tile_metas.entry((self.entry_id.clone(), tile_id))
         {
-            return self
-                .tile_metas
-                .get(&(self.entry_id.clone(), tile_id))
-                .unwrap()
-                .clone();
-        } else {
             config
                 .data_source
                 .fetch_slot_meta_tile(self.entry_id.clone(), tile_id);
+            e.insert(None);
+            None
+        } else {
             self.tile_metas
-                .insert((self.entry_id.clone(), tile_id), None);
-            return None;
+                .get(&(self.entry_id.clone(), tile_id))
+                .unwrap()
+                .clone()
         }
     }
 
@@ -558,14 +554,14 @@ impl Slot {
                     } else {
                         None
                     };
-                    if index.is_some() {
+                    if let Some(index) = index {
                         if clicked {
                             ui.painter().rect(item_rect, 0.0, item.color, Stroke::NONE);
                             cx.selected_state
                                 .highlighted_items
                                 .get_mut(&self.entry_id)
                                 .unwrap()
-                                .remove(index.unwrap());
+                                .remove(index);
                         } else {
                             ui.painter().rect(
                                 item_rect,
@@ -1071,11 +1067,11 @@ impl Window {
                     ProfApp::zoom(cx, cx.view_interval);
                 }
                 Err(e) => {
-                    if e.to_string() == "no value" {
+                    if e == "no value" {
                         cx.view_interval_start_buffer = cx.view_interval.start.to_string();
                         return;
                     }
-                    cx.view_interval_start_buffer = e.to_string();
+                    cx.view_interval_start_buffer = e;
                 }
             }
         }
@@ -1095,11 +1091,11 @@ impl Window {
                     ProfApp::zoom(cx, cx.view_interval);
                 }
                 Err(e) => {
-                    if e.to_string() == "no value" {
+                    if e == "no value" {
                         cx.view_interval_stop_buffer = cx.view_interval.stop.to_string();
                         return;
                     }
-                    cx.view_interval_stop_buffer = e.to_string();
+                    cx.view_interval_stop_buffer = e;
                 }
             }
         }
@@ -1168,7 +1164,7 @@ impl Window {
             }
         }
 
-        return None;
+        None
     }
 }
 
@@ -1947,7 +1943,7 @@ fn get_entries_with_level<'a>(items: &Vec<&'a EntryID>, level: u64) -> Vec<Vec<&
 }
 
 fn get_filtered_entries<'a>(
-    level_entries: &Vec<Vec<&'a EntryID>>,
+    level_entries: &[Vec<&'a EntryID>],
     slot_index: u64,
     i: usize,
 ) -> Vec<&'a EntryID> {

@@ -6,7 +6,6 @@ use legion_prof_viewer::logging::*;
 
 use url::Url;
 
-
 const DEFAULT_URL: &str = "http://127.0.0.1:8080";
 
 fn main() {

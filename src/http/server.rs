@@ -1,15 +1,15 @@
 use crate::data::{DataSource, EntryInfo};
 
-use actix_web::{
-    middleware,
-    web::{self, Data},
-    App, HttpResponse, HttpServer, Responder, Result, http,
-};
 use actix_cors::Cors;
+use actix_web::{
+    http, middleware,
+    web::{self, Data},
+    App, HttpResponse, HttpServer, Responder, Result,
+};
 
 use std::sync::{Arc, Mutex};
 
-use super::schema::{ FetchRequest, FetchTilesRequest};
+use super::schema::{FetchRequest, FetchTilesRequest};
 
 // dyn DataSource + Sync + Send + 'static> from
 // https://stackoverflow.com/questions/65645622/how-do-i-pass-a-trait-as-application-data-to-actix-web
@@ -62,7 +62,7 @@ impl DataSourceHTTPServer {
         let to_ret = source.fetch_info().interval;
         Ok(web::Json(to_ret))
     }
-    
+
     async fn fetch_tiles(
         info: web::Json<FetchTilesRequest>,
         data: web::Data<AppState>,
@@ -102,7 +102,6 @@ impl DataSourceHTTPServer {
         Ok(web::Json(to_ret))
     }
 
-
     async fn fetch_summary_tile(
         info: web::Json<FetchRequest>,
         data: web::Data<AppState>,
@@ -116,7 +115,6 @@ impl DataSourceHTTPServer {
         Ok(web::Json(to_ret))
     }
 
-
     #[actix_web::main]
     pub async fn create_server(self) -> std::io::Result<()> {
         let state = Data::from(Arc::new(self.state));
@@ -124,13 +122,13 @@ impl DataSourceHTTPServer {
         env_logger::init();
         HttpServer::new(move || {
             let cors = Cors::default()
-            .send_wildcard()
-            .allow_any_origin()
-            // .allowed_origin("All")
-            .allowed_methods(vec!["GET", "POST"])
-            .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
-            .allowed_header(http::header::CONTENT_TYPE)
-            .max_age(3600);
+                .send_wildcard()
+                .allow_any_origin()
+                // .allowed_origin("All")
+                .allowed_methods(vec!["GET", "POST"])
+                .allowed_headers(vec![http::header::AUTHORIZATION, http::header::ACCEPT])
+                .allowed_header(http::header::CONTENT_TYPE)
+                .max_age(3600);
             App::new()
                 .wrap(middleware::Logger::default())
                 .wrap(middleware::Compress::default())
@@ -146,7 +144,6 @@ impl DataSourceHTTPServer {
                 )
                 .route("/slot_tile", web::post().to(Self::fetch_slot_tile))
                 .route("/summary_tile", web::post().to(Self::fetch_summary_tile))
-                
         })
         .bind((self.host.as_str(), self.port))?
         .run()

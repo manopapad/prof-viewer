@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize, Hash)]
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize, Hash,
+)]
 pub struct Timestamp(pub i64 /* ns */);
 
 impl fmt::Display for Timestamp {
@@ -35,7 +37,9 @@ impl fmt::Display for Timestamp {
     }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize, Hash)]
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Default, Deserialize, Serialize, Hash,
+)]
 pub struct Interval {
     pub start: Timestamp,
     pub stop: Timestamp, // exclusive
@@ -124,7 +128,7 @@ impl Interval {
     pub fn lerp(self, value: f32) -> Timestamp {
         Timestamp((value * (self.duration_ns() as f32)).round() as i64 + self.start.0)
     }
-    
+
     // convert a string like "500.0 s" to a timestamp
     pub fn convert_str_to_timestamp(s: &str) -> Result<Timestamp, String> {
         let mut parts = s.split_whitespace();

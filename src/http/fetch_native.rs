@@ -16,5 +16,6 @@ pub fn fetch(
                 .expect("unable to get text");
 
             on_done(Ok(ProfResponse { body: text }))
-        });
+        })
+        .expect("unable to spawn thread");
 }

@@ -22,7 +22,7 @@ pub struct Initializer {
     pub interval: Interval,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub enum EntryInfo {
     Panel {
         short_name: String,
