@@ -3,26 +3,32 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use reqwest::header::Entry;
-use serde::{Deserialize, Serialize};
+#[cfg(target_arch = "wasm32")]
+use reqwest::{Request, RequestBuilder, Response, ClientBuilder, Client};
+#[cfg(not(target_arch = "wasm32"))]
+use reqwest::blocking::{Request, RequestBuilder, Response, ClientBuilder, Client};
+
+
+use url::Url;
 
 use crate::{
     data::{
-        DataSource, EntryID, EntryInfo, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID,
+     EntryID, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID,
     },
     deferred_data::DeferredDataSource,
     logging::*,
     queue::queue::{ProcessType, Work},
-    timestamp::Interval,
+    timestamp::Interval, http::fetch::ProfResponse,
 };
-use ehttp::{self, headers, Request};
+
+use crate::http::fetch::fetch;
+// use ehttp::{self, headers, Request};
 
 use super::schema::{FetchMultipleRequest, FetchRequest, FetchTilesRequest};
 
 pub struct HTTPQueueDataSource {
-    pub host: String,
-    pub port: u16,
-    pub client: reqwest::Client,
+    pub url: Url,
+    pub client: Client,
     pub queue: Arc<Mutex<Vec<Work>>>,
     pub info: Option<Initializer>,
     pub interval: Interval,
@@ -33,18 +39,18 @@ pub struct HTTPQueueDataSource {
 }
 
 impl HTTPQueueDataSource {
-    pub fn new(host: String, port: u16, queue: Arc<Mutex<Vec<Work>>>) -> Self {
+    pub fn new(url: Url) -> Self {
         // log("INIT HTTPQueueDataSource");
+        let queue: std::sync::Arc<std::sync::Mutex<Vec<Work>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         Self {
-            host,
-            port,
-            client: reqwest::ClientBuilder::new()
+            url,
+            client: ClientBuilder::new()
                 // .timeout(std::time::Duration::from_secs(5))
                 // .gzip(true)
                 // .brotli(true)
                 .build()
                 .unwrap(),
-            // queue: Arc::new(Mutex::new(Vec::new())),
             queue,
             info: None,
             interval: Interval::default(),
@@ -96,12 +102,6 @@ impl HTTPQueueDataSource {
                     let interval = serde_json::from_str::<Interval>(&work.data).unwrap();
                     // add to cache
                     self.interval = interval;
-
-                    // clear all the caches
-                    // self.FETCH_TILES_cache.clear();
-                    // self.fetch_summary_tiles_cache.clear();
-                    // self.fetch_slot_meta_tiles_cache.clear();
-                    // self.fetch_slot_tiles_cache.clear();
                 }
                 ProcessType::FETCH_INFO => {
                     // deserialize work.data into EntryInfo
@@ -121,18 +121,20 @@ impl HTTPQueueDataSource {
         // log("queue_work");
         let _work = work.clone();
         let url = match work.process_type {
-            ProcessType::FETCH_SLOT_META_TILE => {
-                format!("https://{}:{}/slot_meta_tile", self.host, self.port)
-            }
-            ProcessType::FETCH_SLOT_TILE => {
-                format!("https://{}:{}/slot_tile", self.host, self.port)
-            }
-            ProcessType::FETCH_TILES => format!("https://{}:{}/tiles", self.host, self.port),
+            ProcessType::FETCH_SLOT_META_TILE => self
+                .url
+                .join("/slot_meta_tile")
+                .expect("Invalid URL with /slot_meta_tile"),
+            ProcessType::FETCH_SLOT_TILE => self
+                .url
+                .join("/slot_tile")
+                .expect("Invalid URL with /slot_tile"),
+            ProcessType::FETCH_TILES => self.url.join("/tiles").expect("Invalid URL with /tiles"),
             ProcessType::FETCH_SUMMARY_TILE => {
-                format!("https://{}:{}/summary_tile", self.host, self.port)
+                self.url.join("/summary_tile").expect("Invalid URL with /summary_tile")
             }
-            ProcessType::INTERVAL => format!("https://{}:{}/interval", self.host, self.port),
-            ProcessType::FETCH_INFO => format!("https://{}:{}/info", self.host, self.port),
+            ProcessType::INTERVAL => self.url.join("/interval").expect("Invalid URL with /interval"),
+            ProcessType::FETCH_INFO => {println!("{:?}", self.url.join("/info").expect("Invalid URL with /info")); self.url.join("/info").expect("Invalid URL with /info")},
         };
 
         let body = match work.process_type {
@@ -160,30 +162,35 @@ impl HTTPQueueDataSource {
             ProcessType::FETCH_INFO => "".to_string(),
         };
 
-        let request = Request {
-            method: "POST".to_owned(),
-            url: url.to_string(),
-            body: body.into(),
-            headers: headers(&[("Accept", "*/*"), ("Content-Type", "javascript/json;")]),
-        };
+        println!("{:?}", url.to_string());
+        // let request = Request {
+        //     method: "POST".to_owned(),
+        //     url: url.to_string(),
+        //     body: body.into(),
+        //     headers: headers(&[("Accept", "*/*"), ("Content-Type", "javascript/json;")]),
+        // };
+
+        let request = self.client.post(url)
+            .header("Accept", "*/*")
+            .header("Content-Type", "javascript/json;")
+            .body(body);
         // request.body = body.into();
 
         // log(&url.clone());
         let queue = self.queue.clone();
-        ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
-            // deserialize response into a vector of TileIDs
 
+        fetch(request, move |result: Result<ProfResponse, String>| {
+        // ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
+            // deserialize response into a vector of TileIDs
             let work = Work {
                 entry_id: work.entry_id.clone(),
                 tile_id: work.tile_id,
                 tile_ids: _work.tile_ids.clone(),
                 interval: work.interval,
-                data: result.unwrap().text().unwrap().to_string(),
+                data: result.unwrap().body,
                 process_type: work.process_type,
             };
-            if work.process_type == ProcessType::FETCH_INFO {
-                // console_log!("ASYNC: pushing new work to queue: {:?}", work);
-            }
+
             queue.lock().unwrap().push(work);
         });
     }

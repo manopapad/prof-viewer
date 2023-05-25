@@ -1,8 +1,7 @@
-use std::collections::{BTreeMap, BTreeSet};
-use std::vec;
+use std::collections::{BTreeMap};
 
 use crate::data::{
-    DataSource, EntryID, EntryInfo, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID,
+    DataSource, EntryID, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID,
 };
 use crate::timestamp::Interval;
 
