@@ -1,4 +1,4 @@
-use reqwest::{RequestBuilder, Response};
+use reqwest::RequestBuilder;
 
 use crate::http::fetch::ProfResponse;
 /// Spawn an async task.
@@ -12,11 +12,18 @@ where
     wasm_bindgen_futures::spawn_local(future);
 }
 
-pub fn fetch(request: RequestBuilder, on_done: Box<dyn FnOnce(Result<ProfResponse, String>) + Send>) {
+pub fn fetch(
+    request: RequestBuilder,
+    on_done: Box<dyn FnOnce(Result<ProfResponse, String>) + Send>,
+) {
     spawn_future(async move {
         let text = request
             .send()
-            .await.expect("test").text().await.expect("unable to get text");
+            .await
+            .expect("test")
+            .text()
+            .await
+            .expect("unable to get text");
 
         let res = Ok(ProfResponse { body: text });
 

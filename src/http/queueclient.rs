@@ -3,28 +3,25 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-#[cfg(target_arch = "wasm32")]
-use reqwest::{Request, RequestBuilder, Response, ClientBuilder, Client};
 #[cfg(not(target_arch = "wasm32"))]
-use reqwest::blocking::{Request, RequestBuilder, Response, ClientBuilder, Client};
-
+use reqwest::blocking::{Client, ClientBuilder};
+#[cfg(target_arch = "wasm32")]
+use reqwest::{Client, ClientBuilder};
 
 use url::Url;
 
 use crate::{
-    data::{
-     EntryID, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID,
-    },
+    data::{EntryID, Initializer, SlotMetaTile, SlotTile, SummaryTile, TileID},
     deferred_data::DeferredDataSource,
+    http::fetch::ProfResponse,
     logging::*,
     queue::queue::{ProcessType, Work},
-    timestamp::Interval, http::fetch::ProfResponse,
+    timestamp::Interval,
 };
 
 use crate::http::fetch::fetch;
-// use ehttp::{self, headers, Request};
 
-use super::schema::{FetchMultipleRequest, FetchRequest, FetchTilesRequest};
+use super::schema::{FetchRequest, FetchTilesRequest};
 
 pub struct HTTPQueueDataSource {
     pub url: Url,
@@ -45,12 +42,7 @@ impl HTTPQueueDataSource {
             std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
         Self {
             url,
-            client: ClientBuilder::new()
-                // .timeout(std::time::Duration::from_secs(5))
-                // .gzip(true)
-                // .brotli(true)
-                .build()
-                .unwrap(),
+            client: ClientBuilder::new().build().unwrap(),
             queue,
             info: None,
             interval: Interval::default(),
@@ -68,21 +60,21 @@ impl HTTPQueueDataSource {
 
         for work in q.iter() {
             match work.process_type {
-                ProcessType::FETCH_SLOT_META_TILE => {
+                ProcessType::FetchSlotMetaTile => {
                     // deserialize work.data into SlotMetaTile
                     let smt = serde_json::from_str::<SlotMetaTile>(&work.data).unwrap();
                     // add to cache or create new vector
 
                     self.fetch_slot_meta_tiles_cache.push(smt.clone());
                 }
-                ProcessType::FETCH_SLOT_TILE => {
+                ProcessType::FetchSlotTile => {
                     // deserialize work.data into SlotTile
                     let st = serde_json::from_str::<SlotTile>(&work.data).unwrap();
                     // add to cache
                     self.fetch_slot_tiles_cache.push(st.clone());
                 }
 
-                ProcessType::FETCH_TILES => {
+                ProcessType::FetchTiles => {
                     // deserialize work.data into Vec<TileID>
                     let tiles = serde_json::from_str::<Vec<TileID>>(&work.data).unwrap();
                     // add to cache
@@ -91,7 +83,7 @@ impl HTTPQueueDataSource {
                         .or_insert(tiles.clone())
                         .extend(tiles.clone());
                 }
-                ProcessType::FETCH_SUMMARY_TILE => {
+                ProcessType::FetchSummaryTile => {
                     // deserialize work.data into SummaryTile
                     let st = serde_json::from_str::<SummaryTile>(&work.data).unwrap();
                     // add to cache
@@ -103,7 +95,7 @@ impl HTTPQueueDataSource {
                     // add to cache
                     self.interval = interval;
                 }
-                ProcessType::FETCH_INFO => {
+                ProcessType::FetchInfo => {
                     // deserialize work.data into EntryInfo
                     // console_log!("found fetch info in queue");
                     let info: Initializer =
@@ -121,66 +113,60 @@ impl HTTPQueueDataSource {
         // log("queue_work");
         let _work = work.clone();
         let url = match work.process_type {
-            ProcessType::FETCH_SLOT_META_TILE => self
+            ProcessType::FetchSlotMetaTile => self
                 .url
                 .join("/slot_meta_tile")
                 .expect("Invalid URL with /slot_meta_tile"),
-            ProcessType::FETCH_SLOT_TILE => self
+            ProcessType::FetchSlotTile => self
                 .url
                 .join("/slot_tile")
                 .expect("Invalid URL with /slot_tile"),
-            ProcessType::FETCH_TILES => self.url.join("/tiles").expect("Invalid URL with /tiles"),
-            ProcessType::FETCH_SUMMARY_TILE => {
-                self.url.join("/summary_tile").expect("Invalid URL with /summary_tile")
-            }
-            ProcessType::INTERVAL => self.url.join("/interval").expect("Invalid URL with /interval"),
-            ProcessType::FETCH_INFO => {println!("{:?}", self.url.join("/info").expect("Invalid URL with /info")); self.url.join("/info").expect("Invalid URL with /info")},
+            ProcessType::FetchTiles => self.url.join("/tiles").expect("Invalid URL with /tiles"),
+            ProcessType::FetchSummaryTile => self
+                .url
+                .join("/summary_tile")
+                .expect("Invalid URL with /summary_tile"),
+            ProcessType::INTERVAL => self
+                .url
+                .join("/interval")
+                .expect("Invalid URL with /interval"),
+            ProcessType::FetchInfo => self.url.join("/info").expect("Invalid URL with /info"),
         };
 
         let body = match work.process_type {
-            ProcessType::FETCH_SLOT_META_TILE => serde_json::to_string(&FetchRequest {
+            ProcessType::FetchSlotMetaTile => serde_json::to_string(&FetchRequest {
                 entry_id: work.entry_id.clone(),
                 tile_id: work.tile_id.unwrap(),
             })
             .unwrap(),
-            ProcessType::FETCH_SLOT_TILE => serde_json::to_string(&FetchRequest {
+            ProcessType::FetchSlotTile => serde_json::to_string(&FetchRequest {
                 entry_id: work.entry_id.clone(),
                 tile_id: work.tile_id.unwrap(),
             })
             .unwrap(),
-            ProcessType::FETCH_TILES => serde_json::to_string(&FetchTilesRequest {
+            ProcessType::FetchTiles => serde_json::to_string(&FetchTilesRequest {
                 entry_id: work.entry_id.clone(),
                 interval: work.interval.unwrap(),
             })
             .unwrap(),
-            ProcessType::FETCH_SUMMARY_TILE => serde_json::to_string(&FetchRequest {
+            ProcessType::FetchSummaryTile => serde_json::to_string(&FetchRequest {
                 entry_id: work.entry_id.clone(),
                 tile_id: work.tile_id.unwrap(),
             })
             .unwrap(),
             ProcessType::INTERVAL => "".to_string(),
-            ProcessType::FETCH_INFO => "".to_string(),
+            ProcessType::FetchInfo => "".to_string(),
         };
-
-        println!("{:?}", url.to_string());
-        // let request = Request {
-        //     method: "POST".to_owned(),
-        //     url: url.to_string(),
-        //     body: body.into(),
-        //     headers: headers(&[("Accept", "*/*"), ("Content-Type", "javascript/json;")]),
-        // };
-
-        let request = self.client.post(url)
+        let request = self
+            .client
+            .post(url)
             .header("Accept", "*/*")
             .header("Content-Type", "javascript/json;")
             .body(body);
-        // request.body = body.into();
 
-        // log(&url.clone());
         let queue = self.queue.clone();
 
         fetch(request, move |result: Result<ProfResponse, String>| {
-        // ehttp::fetch(request, move |result: ehttp::Result<ehttp::Response>| {
             // deserialize response into a vector of TileIDs
             let work = Work {
                 entry_id: work.entry_id.clone(),
@@ -206,7 +192,7 @@ impl DeferredDataSource for HTTPQueueDataSource {
             tile_ids: None,
             interval: None,
             data: "".to_string(),
-            process_type: ProcessType::FETCH_INFO,
+            process_type: ProcessType::FetchInfo,
         };
         self.queue_work(work);
         // console_log!("added fetch_info to queue");
@@ -227,7 +213,7 @@ impl DeferredDataSource for HTTPQueueDataSource {
             tile_ids: None,
             interval: Some(request_interval),
             data: "".to_string(),
-            process_type: ProcessType::FETCH_TILES,
+            process_type: ProcessType::FetchTiles,
         };
         self.queue_work(work);
     }
@@ -250,7 +236,7 @@ impl DeferredDataSource for HTTPQueueDataSource {
             interval: None,
             tile_ids: None,
             data: "".to_string(),
-            process_type: ProcessType::FETCH_SUMMARY_TILE,
+            process_type: ProcessType::FetchSummaryTile,
         };
         self.queue_work(work);
     }
@@ -271,7 +257,7 @@ impl DeferredDataSource for HTTPQueueDataSource {
             interval: None,
             tile_ids: None,
             data: "".to_string(),
-            process_type: ProcessType::FETCH_SLOT_TILE,
+            process_type: ProcessType::FetchSlotTile,
         };
         self.queue_work(work);
     }
@@ -295,7 +281,7 @@ impl DeferredDataSource for HTTPQueueDataSource {
             tile_ids: None,
             interval: None,
             data: "".to_string(),
-            process_type: ProcessType::FETCH_SLOT_META_TILE,
+            process_type: ProcessType::FetchSlotMetaTile,
         };
         self.queue_work(work);
     }

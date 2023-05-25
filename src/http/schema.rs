@@ -10,11 +10,6 @@ pub struct FetchRequest {
     pub entry_id: EntryID,
     pub tile_id: TileID,
 }
-#[derive(Debug, Serialize, Deserialize)]
-pub struct FetchMultipleRequest {
-    pub entry_id: EntryID,
-    pub tile_ids: Vec<TileID>,
-}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct FetchTilesRequest {

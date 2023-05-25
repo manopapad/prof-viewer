@@ -1,6 +1,5 @@
 // use std::sync::{Arc, Mutex};
 
-
 use crate::{
     data::{EntryID, TileID},
     timestamp::Interval,
@@ -8,11 +7,11 @@ use crate::{
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ProcessType {
-    FETCH_INFO,
-    FETCH_SLOT_META_TILE,
-    FETCH_SLOT_TILE,
-    FETCH_TILES,
-    FETCH_SUMMARY_TILE,
+    FetchInfo,
+    FetchSlotMetaTile,
+    FetchSlotTile,
+    FetchTiles,
+    FetchSummaryTile,
     INTERVAL,
 }
 
@@ -25,6 +24,3 @@ pub struct Work {
     pub data: String,
     pub process_type: ProcessType,
 }
-
-// #[derive(Clone)]
-// pub type WorkQueue = Arc<Mutex<Vec<Work>>>;

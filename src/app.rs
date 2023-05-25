@@ -1,18 +1,14 @@
 use crate::deferred_data::DeferredDataSource;
 use egui::{Color32, NumExt, Pos2, Rect, RichText, ScrollArea, Slider, Stroke, TextStyle, Vec2};
 use serde::{Deserialize, Serialize};
-use std::collections::hash_map::DefaultHasher;
-use std::collections::{BTreeMap, BTreeSet};
-use std::hash::{Hash, Hasher};
+use std::collections::BTreeMap;
 use std::time::Duration;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
 
 use crate::data::{
-    self, DataSource, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, SummaryTile, TileID,
-    UtilPoint,
+    self, EntryID, EntryInfo, Field, SlotMetaTile, SlotTile, SummaryTile, TileID, UtilPoint,
 };
-use crate::queue::stamp::Stamp;
 
 use crate::logging::{console_log, log};
 use crate::search::{SelectedItem, SelectedState};
@@ -448,19 +444,22 @@ impl Slot {
         }
     }
 
-    fn fetch_meta_tile(
-        &mut self,
-        tile_id: TileID,
-        config: &mut Config,
-        cx: &mut Context,
-    ) -> Option<SlotMetaTile> {
-        if self.tile_metas.contains_key(&(self.entry_id.clone(), tile_id)) {
-            return self.tile_metas.get(&(self.entry_id.clone(), tile_id)).unwrap().clone();
+    fn fetch_meta_tile(&mut self, tile_id: TileID, config: &mut Config) -> Option<SlotMetaTile> {
+        if self
+            .tile_metas
+            .contains_key(&(self.entry_id.clone(), tile_id))
+        {
+            return self
+                .tile_metas
+                .get(&(self.entry_id.clone(), tile_id))
+                .unwrap()
+                .clone();
         } else {
             config
                 .data_source
                 .fetch_slot_meta_tile(self.entry_id.clone(), tile_id);
-            self.tile_metas.insert((self.entry_id.clone(), tile_id), None);
+            self.tile_metas
+                .insert((self.entry_id.clone(), tile_id), None);
             return None;
         }
     }
@@ -578,10 +577,14 @@ impl Slot {
                     } else if clicked {
                         // retire
 
-                        let meta = if let Some(m) = fetch_meta_tile(config, &mut self.tile_metas, &self.entry_id.clone(), &tile_id) {
+                        let meta = if let Some(m) = fetch_meta_tile(
+                            config,
+                            &mut self.tile_metas,
+                            &self.entry_id.clone(),
+                            &tile_id,
+                        ) {
                             Some(m.items[row][item_idx].clone())
-                        } else 
-                        {
+                        } else {
                             None
                         };
                         let selected_item = SelectedItem {
@@ -627,7 +630,7 @@ impl Slot {
         }
 
         if let Some((row, item_idx, item_rect, tile_id)) = interact_item {
-            if let Some(tile_meta) = self.fetch_meta_tile(tile_id, config, cx) {
+            if let Some(tile_meta) = self.fetch_meta_tile(tile_id, config) {
                 let item_meta = &tile_meta.items[row][item_idx];
                 ui.show_tooltip_ui("task_tooltip", &item_rect, |ui| {
                     ui.label(&item_meta.title);
@@ -1462,8 +1465,13 @@ impl eframe::App for ProfApp {
                 let entry: Option<&mut Slot> = window.find_slot_meta_entry(&tile);
 
                 if let Some(entry) = entry {
-                    if entry.tile_metas.contains_key(&(tile.entry_id.clone(), tile.tile_id)) {
-                        entry.tile_metas.insert((tile.entry_id.clone(), tile.tile_id), Some(tile));
+                    if entry
+                        .tile_metas
+                        .contains_key(&(tile.entry_id.clone(), tile.tile_id))
+                    {
+                        entry
+                            .tile_metas
+                            .insert((tile.entry_id.clone(), tile.tile_id), Some(tile));
                     }
                     // also add to the window meta cache
                 }
@@ -1703,11 +1711,15 @@ impl eframe::App for ProfApp {
                                                                     if count > MAX_SELECTED_ITEMS {
                                                                         break 'outer;
                                                                     }
-                                                                    let item_str = if let Some (meta) = &item.meta {
-                                                                        meta.title.clone()
-                                                                    } else {
-                                                                        "Fetching item...".to_string()
-                                                                    };
+                                                                    let item_str =
+                                                                        if let Some(meta) =
+                                                                            &item.meta
+                                                                        {
+                                                                            meta.title.clone()
+                                                                        } else {
+                                                                            "Fetching item..."
+                                                                                .to_string()
+                                                                        };
                                                                     if ui
                                                                         .small_button(
                                                                             RichText::new(

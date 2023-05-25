@@ -9,7 +9,7 @@ use actix_cors::Cors;
 
 use std::sync::{Arc, Mutex};
 
-use super::schema::{FetchMultipleRequest, FetchRequest, FetchTilesRequest};
+use super::schema::{ FetchRequest, FetchTilesRequest};
 
 // dyn DataSource + Sync + Send + 'static> from
 // https://stackoverflow.com/questions/65645622/how-do-i-pass-a-trait-as-application-data-to-actix-web
