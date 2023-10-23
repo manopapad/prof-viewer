@@ -52,3 +52,6 @@
 - [ ] Parse provenance information, according to https://github.com/StanfordLegion/legion/issues/1554
 - [ ] Include in the window title the directory where the profile logs are
 - [ ] In server mode, add a form on the top-level served page, where the user can specify which files to open, instead of having to enter this information manually on the URL as a GET `url=` parameter
+- [ ] Vertical scrolling within the "control widgets" group
+
+  Currently if there is not enough vertical space, the "Controls" and "Search" boxes will overlap the footer with the "Show Controls" button, and there is no way to access that, or any controls that are out of view. The footer should always be visible, and anything on top of it should reflow within the available vertical space, with a vertical scrollbar.
