@@ -26,7 +26,7 @@
 - [x] Include in the window title the directory where the profile logs are
 - [X] Horizontal pan (using keyboard arrow keys)
 - [ ] Horizontal pan (including drag, touchpad, horizontal scroll wheel)
-- [ ] Don't horizontal pan past the start/end of the profile
+- [ ] Allow horizontal panning past the start/end of the profile, but not so much that none of the actual profile is visible anymore. Out-of-bounds areas should get a different background color.
 - [ ] Keyboard bindings (e.g., arrow keys to select panels, space bar to toggle expand/collapse, ESC key to close popups)
 - [ ] Editable key bindings?
 - [ ] Better error handling (e.g., when the provided URL 404s, there's a permission issue, or parsing fails)
