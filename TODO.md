@@ -24,7 +24,9 @@
 - [x] Filter by kind
 - [x] Task detail view
 - [x] Include in the window title the directory where the profile logs are
-- [ ] Horizontal pan (including drag, keyboard, horizontal scroll wheel)
+- [X] Horizontal pan (using keyboard arrow keys)
+- [ ] Horizontal pan (including drag, touchpad, horizontal scroll wheel)
+- [ ] Don't horizontal pan past the start/end of the profile
 - [ ] Keyboard bindings (e.g., arrow keys to select panels, space bar to toggle expand/collapse, ESC key to close popups)
 - [ ] Editable key bindings?
 - [ ] Better error handling (e.g., when the provided URL 404s, there's a permission issue, or parsing fails)
