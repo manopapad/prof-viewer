@@ -45,7 +45,8 @@
 - [ ] When user clicks "zoom to item", e.g. on an instance listed in a task box, also open that new item's popup
 - [ ] Have the tooltip box wrap text / scroll vertically if the contents are too long,
       e.g. if we're trying to show full backtraces on provenance, or there's many field names to list
-- [ ] Color instances using a heat map based on size
+- [ ] Color instances using a heat map based on size.
+      Alternatively, scale vertically according to size (perhaps in logscale).
 - [ ] The "zoom reset" keyboard shortcut (ctrl + left arrow) doesn't work on MacOS (at least Safari)
 - [ ] Thousands separator on large numbers
 - [ ] Add average bandwidth measure on copies
