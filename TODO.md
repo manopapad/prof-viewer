@@ -60,3 +60,5 @@
 
 - [ ] Combine "Expand by kind" and "Collapse by kind" (if any lines belonging to the clicked group are collapsed then a click expands all; if all are expanded then a click collapses all)
 - [ ] Filter channel lines by source/target memory (or memory kind)
+- [ ] Support sorting of channels by destination memory
+- [ ] Re-number different kinds of processors/memories starting from 0 (e.g. first GPU should be g0 rather than g7)
