@@ -57,3 +57,5 @@
 - [ ] Vertical scrolling within the "control widgets" group
 
   Currently if there is not enough vertical space, the "Controls" and "Search" boxes will overlap the footer with the "Show Controls" button, and there is no way to access that, or any controls that are out of view. The footer should always be visible, and anything on top of it should reflow within the available vertical space, with a vertical scrollbar.
+
+- [ ] Combine "Expand by kind" and "Collapse by kind" (if any lines from the clicked group are collapsed then a click expands; if all are expanded then a click collapses)
